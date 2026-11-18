@@ -27,7 +27,7 @@ Noch offen (Design).
 
 ## Context index
 
-- Recherche zu Kit-Bausteinen und Store-Nachbarn: Cockpit, `_SDD/2026-11-18-recherche-kit-bausteine-und-store-nachbarn.md`.
+- Bevor du am Design weiterarbeitest: die Recherche zu Kit-Bausteinen und Store-Nachbarn im Coding-Cockpit (Note „2026-11-18-recherche-kit-bausteine-und-store-nachbarn“ unter _SDD, maintainer-lokal, CORE-META-14).
 
 ## Memory
 
