@@ -1,8 +1,9 @@
 /**
  * GUI-Smoke — fährt die Prüfpunkte aus docs/SMOKE.md gegen ein LAUFENDES Obsidian (CORE-TEST-02 b).
- * Stand: Aufgabe 12 Teil a. Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
+ * Stand: Aufgabe 12 Teil b. Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
  * die Gerätedateien: Einrichten (Abbruch, Kontrollkästchen, Datei und Schlüssel), eine fremde Fassung im Ordner, den Reiter „Geräte und Schlüssel“,
- * die Sperre nach gelöschtem Schlüssel und die Code-Eingabe. Vergessen, Schlüssel ersetzen und Gerät entfernen (Teil b) sowie das Einblenden kommen später dazu.
+ * die Sperre nach gelöschtem Schlüssel und die Code-Eingabe, dazu (Teil b) „Trotzdem einrichten“, Schlüssel ersetzen, Person vergessen (die Gerätedatei auf der Platte
+ * wird mit dem Schlüssel im Treiber geöffnet und auf Klartext geprüft) und Gerät entfernen. Das Einblenden kommt später dazu.
  *
  * ## Zweitinstanz (eigenes Profil, eigener Port — NICHT die reguläre Instanz anfassen; `--port` ist Pflicht)
  *
@@ -13,17 +14,18 @@
  * jeder Punkt muss rot werden, sonst misst er nichts vom Plugin.
  * Bilanz: `createBilanz` mit Soll-Liste. Exit 1 bei Rot oder „nichts gemessen“, Exit 2 bei Abbruch.
  */
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cwd } from "node:process";
 
 import { createBilanz, parseArgs, runDriver } from "../../tools/obsidian-cdp/bilanz.js";
 import { Cdp, attachTo, beimAbbruch, bereiteInstanzVor, clearNotices, clickReal, istAbgebrochen, notices, pollUntil, requireVisible, schliesseDialog } from "../../tools/obsidian-cdp/cdp.js";
+import { istZerstoerendJs } from "../../tools/obsidian-cdp/knoepfe.js";
 import { buildVault, requireEigenerBuild, stagingVaultDir } from "../../tools/obsidian-cdp/vault.js";
-import { encodePayload } from "../src/core/payload.js";
-import { sealEnvelope } from "../src/vendor/kit/key-envelope.js";
+import { decodePayload, encodePayload } from "../src/core/payload.js";
+import { openEnvelope, readEnvelopeHeader, sealEnvelope } from "../src/vendor/kit/key-envelope.js";
 import { encryptionKey, type ChainState } from "../src/vendor/kit/key-ratchet.js";
-import { emptyTable, serializeTable, tableAddEntry, tableAddValue } from "../src/vendor/kit/placeholder-table.js";
+import { emptyTable, serializeTable, tableAddEntry, tableAddValue, type PlaceholderTable } from "../src/vendor/kit/placeholder-table.js";
 import { encodeRecoveryCode } from "../src/vendor/kit/recovery-code.js";
 
 const REPO_NAME = "pseudonymizer";
@@ -50,6 +52,10 @@ const PUNKTE = [
   "G Reiter „Geräte und Schlüssel“: beide Geräte mit Stand und Status Gelesen, Gerätename ändern geht in die Gerätedatei",
   "L Schlüssel gelöscht: Zustand locked (no-key), Reiter nennt den Ausweg, restore liefert locked",
   "K Code-Eingabe: ein falsches Prüfzeichen speichert nichts und nennt den Grund; der richtige Code macht das Gerät wieder ready",
+  "H Einrichten mit vorhandenen Dateien: Abbrechen ändert nichts, „Trotzdem einrichten“ führt zu ready mit neuer Kette, die alte eigene Datei liegt beiseite",
+  "X Schlüssel ersetzen: Bestätigung, neuer Code mit Kontrollkästchen, danach ready mit neuer Kette (Stand 0), gezeigter Code = gespeicherter Schlüssel, alter Platzhalter löst weiter auf",
+  "Z Person vergessen: Wahl, Warndialog mit Werten und Grenzen, danach nennt restore den Platzhalter in forgotten, Stand n+1, die Gerätedatei auf der Platte trägt keinen Klartext der Person",
+  "D Gerät entfernen: Knopf im Reiter, Warnung bei nicht lesbarer Fassung, danach ist die fremde Datei weg und die eigene bleibt",
 ] as const;
 
 const bilanz = createBilanz({ punkte: PUNKTE });
@@ -137,20 +143,43 @@ async function tippeCode(cdp: Cdp, code: string): Promise<boolean> {
   `);
 }
 
+interface FremdePerson { id: string; name: string; mail?: string; telefon?: string }
+
+/** Die Personen der fremden Fassung nach H: Max mit Mail und Telefon, dazu Berta (alles erfunden). */
+const FREMD2_ID = "q7d2w8n4tz";
+const PERSONEN: FremdePerson[] = [
+  { id: FREMD_ID, name: "Max Mustermann", mail: "max@example.org", telefon: "030 1234567" },
+  { id: FREMD2_ID, name: "Berta Beispiel" },
+];
+
+function tabelleVon(personen: readonly FremdePerson[]): PlaceholderTable | null {
+  let t = emptyTable();
+  for (const pe of personen) {
+    const e = tableAddEntry(t, pe.id, "person");
+    if (!e.ok) return null;
+    t = e.table;
+    for (const [field, text] of [[null, pe.name], ["mail", pe.mail], ["phone", pe.telefon]] as const) {
+      if (text === undefined) continue;
+      const w = tableAddValue(t, { id: pe.id, field, text });
+      if (!w.ok) return null;
+      t = w.table;
+    }
+  }
+  return t;
+}
+
 /** Schreibt die Gerätedatei eines fremden Geräts in den Ordner, wie es der Sync täte: gleiche Kette, Stand wie der Schlüssel, mit dem Kit-Umschlag gebaut. Nur erfundene Werte. */
-async function schreibeFremdeFassung(basePath: string, k: SchluesselInhalt): Promise<string | null> {
+async function schreibeFremdeFassung(basePath: string, k: SchluesselInhalt, personen: readonly FremdePerson[] = [{ id: FREMD_ID, name: "Max Mustermann" }]): Promise<string | null> {
   const stand: ChainState = { chainId: Uint8Array.from(k.chainId), stand: k.stand, chainKey: Uint8Array.from(k.key) };
   const key = await encryptionKey(stand);
   if (!key.ok) return null;
-  const eintrag = tableAddEntry(emptyTable(), FREMD_ID, "person");
-  if (!eintrag.ok) return null;
-  const wert = tableAddValue(eintrag.table, { id: FREMD_ID, field: null, text: "Max Mustermann" });
-  if (!wert.ok) return null;
+  const tabelle = tabelleVon(personen);
+  if (tabelle === null) return null;
   const klar = encodePayload({
     format: "pseudonymizer-device", version: 1,
     device: { name: "iPhone (Treiber)", codeShownAtStand: null },
     vault: { language: "de" },
-    table: serializeTable(wert.table),
+    table: serializeTable(tabelle),
   });
   const sealed = await sealEnvelope(key.value, { deviceId: FREMD_GERAET, chainId: stand.chainId, stand: stand.stand }, klar);
   if (!sealed.ok) return null;
@@ -159,6 +188,24 @@ async function schreibeFremdeFassung(basePath: string, k: SchluesselInhalt): Pro
   const datei = `${FREMD_GERAET}.pseudo`;
   writeFileSync(join(ordner, datei), sealed.bytes);
   return datei;
+}
+
+/** Die eigene Gerätedatei auf der Platte, geöffnet mit dem Schlüssel des Treibers (der Stand der Datei steht im Kopf; der Schlüssel muss auf diesem Stand stehen). Nur in der Messung. */
+async function oeffneEigeneDatei(basePath: string, eigeneId: string, k: SchluesselInhalt): Promise<{ stand: number; chainId: string; tabelle: string } | null> {
+  const pfad = join(basePath, ORDNER, `${eigeneId}.pseudo`);
+  if (!existsSync(pfad)) return null;
+  const bytes = Uint8Array.from(readFileSync(pfad));
+  const h = readEnvelopeHeader(bytes);
+  if (!h.ok) return null;
+  const chainId = Array.from(h.header.chainId, (b) => b.toString(16).padStart(2, "0")).join("");
+  if (h.header.stand !== k.stand) return { stand: h.header.stand, chainId, tabelle: "" };
+  const key = await encryptionKey({ chainId: Uint8Array.from(k.chainId), stand: k.stand, chainKey: Uint8Array.from(k.key) });
+  if (!key.ok) return null;
+  const o = await openEnvelope(key.value, bytes);
+  if (!o.ok) return null;
+  const p = decodePayload(o.plaintext);
+  if ("error" in p || typeof p.table !== "string") return null;
+  return { stand: h.header.stand, chainId, tabelle: p.table };
 }
 
 function setup(): void {
@@ -340,7 +387,7 @@ async function main(): Promise<void> {
     await cdp.evaluate(`const l = app.workspace.getLeavesOfType("pseudonymizer-view")[0]; if (l && l.view.showTab) l.view.showTab("devices"); return true;`);
     const zeilen = await pollUntil<{ n: number; texte: string[]; knoepfe: string[] }>(cdp, GERAETE_ZEILEN, 8000, 300);
     const zweiLesbar = Boolean(zeilen) && zeilen!.n === 2 && zeilen!.texte.every((x) => x.includes("Read") && x.includes("key stand 0")) && zeilen!.texte.some((x) => x.includes("this device"));
-    const nurEinKnopf = Boolean(zeilen) && q(zeilen!.knoepfe) === q(["Show recovery code"]);
+    const nurEinKnopf = Boolean(zeilen) && q(zeilen!.knoepfe) === q(["Remove device", "Show recovery code", "Replace key", "Forget a person"]);
     // Name ändern, wie ein Nutzer: ins Feld schreiben, `change` auslösen.
     const nameGesetzt = zeilen ? await cdp.evaluate<boolean>(`
       const i = document.querySelector(".pseu-devices-panel .setting-item input[type=text]");
@@ -409,6 +456,153 @@ async function main(): Promise<void> {
       Boolean(prompt) && Boolean(fehlerText) && /check symbol/.test(fehlerText ?? "") && offenGeblieben && !nachFalsch.hatSchluessel && nachFalsch.state === "locked"
         && Boolean(wiederBereit) && wieder !== null && wieder.stand === 0 && (aufgeloest as { text?: string } | null)?.text === "Hallo Max Mustermann",
       `Eingabefeld da=${Boolean(prompt)}, Fehlertext=${q(fehlerText)}, Dialog blieb offen=${offenGeblieben}, nach falschem Code=${q(nachFalsch)}, ready danach=${Boolean(wiederBereit)}, Schlüssel-Stand=${wieder?.stand ?? null}, restore=${q(aufgeloest)}, Zustand=${q(nachK)}`);
+    await clearNotices(cdp);
+
+    // --- H ---
+    console.log("\nH · Trotzdem einrichten");
+    const vorH = await leseSchluessel(cdp);
+    await cdp.evaluate(`const p = ${P}; if (!p) return false; p.keys.clear(); await p.refreshTables(); return true;`);
+    const hGesperrt = await pollUntil<boolean>(cdp, `const p = ${P}; return Boolean(p) && p.api.status().state === "locked";`, 8000, 300);
+    const dateienVorH = (await zustandsInfo(cdp, info.basePath)).dateien;
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:set-up`)}); return true;`);
+    const warnung = hGesperrt ? await pollUntil<{ titel: string; knoepfe: string[] }>(cdp, `
+      const m = document.querySelector(".modal");
+      if (!m) return null;
+      const t = m.querySelector(".modal-title");
+      return { titel: t ? t.textContent.trim() : "", knoepfe: Array.from(m.querySelectorAll("button")).map((b) => b.textContent.trim()) };
+    `, 6000, 250) : null;
+    const warnungOk = Boolean(warnung) && warnung!.titel === "Device files are already here" && q(warnung!.knoepfe) === q(["Cancel", "Enter code", "Set up anyway"]);
+    const hAbbruch = warnungOk ? await klickeKnopf(cdp, "Cancel") : false;
+    await pollUntil<boolean>(cdp, `return document.querySelectorAll(".modal").length === 0;`, 4000, 200);
+    const nachHAbbruch = await zustandsInfo(cdp, info.basePath);
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:set-up`)}); return true;`);
+    const warnung2 = hAbbruch ? await pollUntil<{ titel: string }>(cdp, MODAL_INFO, 6000, 250) : null;
+    const hWeiter = warnung2 && warnung2.titel === "Device files are already here" && (await klickeKnopf(cdp, "Set up anyway"));
+    const hCode = hWeiter ? await pollUntil<{ titel: string }>(cdp, MODAL_INFO, 6000, 250) : null;
+    const hZurCode = hCode && hCode.titel === "Set up the table" ? await weiterZumCode(cdp) : null;
+    const hGekreuzt = hZurCode ? await clickReal(cdp, `document.querySelector(".modal .pseu-code-confirm input")`) : false;
+    const hGeklickt = hGekreuzt ? await klickeKnopf(cdp, "Continue") : false;
+    const hBereit = hGeklickt ? await pollUntil<boolean>(cdp, `const p = ${P}; return Boolean(p) && p.api.status().state === "ready";`, 10_000, 250) : null;
+    const nachH = await zustandsInfo(cdp, info.basePath);
+    const neuH = await leseSchluessel(cdp);
+    const ordnerH = join(info.basePath, ORDNER);
+    const beiseite = existsSync(ordnerH) ? readdirSync(ordnerH).filter((n) => n.includes(".damaged-")) : [];
+    const andereKette = vorH !== null && neuH !== null && q(vorH.chainId) !== q(neuH.chainId);
+    record("H Einrichten mit vorhandenen Dateien: Abbrechen ändert nichts, „Trotzdem einrichten“ führt zu ready mit neuer Kette, die alte eigene Datei liegt beiseite",
+      Boolean(hGesperrt) && warnungOk && hAbbruch && nachHAbbruch.state === "locked" && !nachHAbbruch.hatSchluessel && q(nachHAbbruch.dateien) === q(dateienVorH)
+        && Boolean(hBereit) && andereKette && neuH!.stand === 0 && nachH.state === "ready" && nachH.dateien.length === 2 && beiseite.length === 1,
+      `gesperrt=${Boolean(hGesperrt)}, Warnung=${q(warnung)}, nach Abbrechen=${q(nachHAbbruch)} (Dateien vorher ${q(dateienVorH)}), ready=${Boolean(hBereit)}, andere Kette=${andereKette}, Stand=${neuH?.stand ?? null}, Dateien=${q(nachH.dateien)}, beiseitegelegt=${q(beiseite)}`);
+    await clearNotices(cdp);
+
+    // Zwei erfundene Personen in einer fremden Fassung unter der neuen Kette; sie stehen binnen einer Frist in der Tabelle.
+    const fremdH = neuH ? await schreibeFremdeFassung(info.basePath, neuH, PERSONEN) : null;
+    const personenDa = fremdH ? await pollUntil<boolean>(cdp, `
+      const p = ${P};
+      if (!p) return null;
+      const a = p.api.restore(${q(`Hallo ${FREMD_PLATZHALTER}, ${FREMD_PLATZHALTER}_Mail und Person_${FREMD2_ID}`)}, { caller: "gui-smoke" });
+      return a && a.text === ${q("Hallo Max Mustermann, max@example.org und Berta Beispiel")} ? true : null;
+    `, 60_000, 1000) : null;
+
+    // --- X ---
+    console.log("\nX · Schlüssel ersetzen");
+    const vorX = await leseSchluessel(cdp);
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:replace-key`)}); return true;`);
+    const xFrage = personenDa ? await pollUntil<{ titel: string; text: string }>(cdp, MODAL_INFO, 8000, 250) : null;
+    const xFrageOk = Boolean(xFrage) && xFrage!.titel === "Replace the key?" && /locked until you enter the new recovery code/.test(xFrage!.text);
+    const xBestaetigt = xFrageOk ? await klickeKnopf(cdp, "Replace key") : false;
+    const xCode = xBestaetigt ? await pollUntil<{ code: string }>(cdp, `
+      const c = document.querySelector(".modal .pseu-code");
+      return c ? { code: Array.from(c.querySelectorAll(".pseu-code-group, .pseu-code-sep")).map((x) => x.textContent).join("") } : null;
+    `, 8000, 250) : null;
+    const keinSchluesselWechselVorHaken = xCode ? await leseSchluessel(cdp) : null;
+    const xWeiterVorher = xCode ? await cdp.evaluate<boolean | null>(`const b = ${MODAL_BTN("Continue")}; return b ? Boolean(b.disabled) : null;`) : null;
+    const xGekreuzt = xCode ? await clickReal(cdp, `document.querySelector(".modal .pseu-code-confirm input")`) : false;
+    const xGeklickt = xGekreuzt ? await klickeKnopf(cdp, "Continue") : false;
+    const neuX = xGeklickt ? await pollUntil<SchluesselInhalt>(cdp, `
+      const p = ${P};
+      if (!p) return null;
+      const k = p.keys.read();
+      if (!k || k.error) return null;
+      const alt = ${q(vorX?.chainId ?? [])};
+      const gleich = alt.length === k.chainId.length && alt.every((b, i) => b === k.chainId[i]);
+      return !gleich && p.api.status().state === "ready" ? { chainId: Array.from(k.chainId), stand: k.stand, key: Array.from(k.key) } : null;
+    `, 10_000, 250) : null;
+    const erwartetX = neuX ? encodeRecoveryCode({ chainId: Uint8Array.from(neuX.chainId), stand: neuX.stand, key: Uint8Array.from(neuX.key) }) : null;
+    const codeGleichX = erwartetX !== null && erwartetX.ok && xCode?.code === erwartetX.code;
+    const eigeneId = (await cdp.evaluate<string | null>(`const p = ${P}; return p ? p.deviceId : null;`)) ?? "";
+    const dateiX = neuX && eigeneId ? await oeffneEigeneDatei(info.basePath, eigeneId, neuX) : null;
+    const nochDa = await cdp.evaluate<unknown>(`const p = ${P}; return p ? p.api.restore(${q(`Hallo ${FREMD_PLATZHALTER} und Person_${FREMD2_ID}`)}, { caller: "gui-smoke" }) : null;`);
+    const fremdZeile = await cdp.evaluate<string | null>(`const p = ${P}; if (!p) return null; const r = p.devicesModel().rows.find((x) => !x.own); return r ? r.status : "keine Zeile";`);
+    record("X Schlüssel ersetzen: Bestätigung, neuer Code mit Kontrollkästchen, danach ready mit neuer Kette (Stand 0), gezeigter Code = gespeicherter Schlüssel, alter Platzhalter löst weiter auf",
+      Boolean(personenDa) && xFrageOk && xBestaetigt && Boolean(xCode) && xWeiterVorher === true
+        && keinSchluesselWechselVorHaken !== null && q(keinSchluesselWechselVorHaken.chainId) === q(vorX?.chainId ?? []) && neuX !== null && neuX.stand === 0 && codeGleichX
+        && dateiX !== null && dateiX.stand === 0 && neuX !== null && dateiX.chainId === neuX.chainId.map((b) => b.toString(16).padStart(2, "0")).join("")
+        && (nochDa as { text?: string } | null)?.text === "Hallo Max Mustermann und Berta Beispiel" && fremdZeile === "not-opened",
+      `Personen da=${Boolean(personenDa)}, Frage=${q(xFrage ? xFrage.titel : null)}, bestätigt=${xBestaetigt}, Code gezeigt=${Boolean(xCode)}, Schlüssel vor dem Kontrollkästchen unverändert=${keinSchluesselWechselVorHaken !== null && q(keinSchluesselWechselVorHaken.chainId) === q(vorX?.chainId ?? [])}, Weiter gesperrt vorher=${xWeiterVorher}, neuer Schlüssel Stand=${neuX?.stand ?? null}, Code = Schlüssel: ${codeGleichX}, Datei=${q(dateiX ? { stand: dateiX.stand, kette: dateiX.chainId } : null)}, restore=${q(nochDa)}, fremde Zeile=${q(fremdZeile)}`);
+    await clearNotices(cdp);
+
+    // --- Z ---
+    console.log("\nZ · Person vergessen");
+    const vorZ = await leseSchluessel(cdp);
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:forget-person`)}); return true;`);
+    const liste = neuX ? await pollUntil<string[]>(cdp, `
+      const items = Array.from(document.querySelectorAll(".prompt .suggestion-item"));
+      return items.length ? items.map((i) => i.textContent.trim()) : null;
+    `, 8000, 250) : null;
+    const maxItem = `(Array.from(document.querySelectorAll(".prompt .suggestion-item")).find((e) => e.textContent.includes("Max Mustermann")) || null)`;
+    const listeOk = Boolean(liste) && liste!.length === 2 && liste!.some((x) => x.includes("Max Mustermann")) && liste!.some((x) => x.includes("Berta Beispiel"));
+    const gewaehlt = listeOk ? await clickReal(cdp, maxItem) : false;
+    const warndialog = gewaehlt ? await pollUntil<{ titel: string; text: string; zerstoerend: boolean }>(cdp, `
+      const m = document.querySelector(".modal");
+      if (!m) return null;
+      const t = m.querySelector(".modal-title");
+      const b = Array.from(m.querySelectorAll("button")).find((x) => x.textContent.trim() === "Forget for good");
+      return { titel: t ? t.textContent.trim() : "", text: m.textContent, zerstoerend: b ? ${istZerstoerendJs("b")} : false };
+    `, 8000, 250) : null;
+    const wd = warndialog?.text ?? "";
+    const warnOk = Boolean(warndialog) && warndialog!.titel === 'Forget "Max Mustermann"?' && warndialog!.zerstoerend
+      && wd.includes("max@example.org") && wd.includes("030 1234567") && wd.includes(`Person_${FREMD_ID}_Mail`)
+      && /only when the version of every device carries the mark/.test(wd) && wd.includes("Until then") && wd.includes("local storage") && wd.includes("iPhone (Treiber)");
+    const zGeklickt = warnOk ? await klickeKnopf(cdp, "Forget for good") : false;
+    const vergessen = zGeklickt ? await pollUntil<{ text: string; forgotten: string[] }>(cdp, `
+      const p = ${P};
+      if (!p) return null;
+      const r = p.api.restore(${q(`Hallo ${FREMD_PLATZHALTER}`)}, { caller: "gui-smoke" });
+      return r && Array.isArray(r.forgotten) && r.forgotten.length > 0 ? { text: r.text, forgotten: r.forgotten } : null;
+    `, 15_000, 250) : null;
+    const bertaNoch = await cdp.evaluate<unknown>(`const p = ${P}; return p ? p.api.restore(${q(`Person_${FREMD2_ID}`)}, { caller: "gui-smoke" }) : null;`);
+    const nachZ = await leseSchluessel(cdp);
+    const dateiZ = nachZ && eigeneId ? await oeffneEigeneDatei(info.basePath, eigeneId, nachZ) : null;
+    const klartextWeg = dateiZ !== null && dateiZ.tabelle !== "" && !/Mustermann|max@example\.org|030 1234567/.test(dateiZ.tabelle) && dateiZ.tabelle.includes("Berta Beispiel");
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:open-view`)}); return true;`);
+    await cdp.evaluate(`const l = app.workspace.getLeavesOfType("pseudonymizer-view")[0]; if (l && l.view.showTab) l.view.showTab("devices"); return true;`);
+    const fortschritt = await pollUntil<string>(cdp, `
+      const k = document.querySelector(".pseu-devices-panel .pseu-devices-key");
+      return k && /caught up/.test(k.textContent) ? k.textContent : null;
+    `, 8000, 300);
+    record("Z Person vergessen: Wahl, Warndialog mit Werten und Grenzen, danach nennt restore den Platzhalter in forgotten, Stand n+1, die Gerätedatei auf der Platte trägt keinen Klartext der Person",
+      listeOk && gewaehlt && warnOk && zGeklickt && Boolean(vergessen) && vergessen!.text === `Hallo ${FREMD_PLATZHALTER}` && vergessen!.forgotten.includes(FREMD_PLATZHALTER)
+        && (bertaNoch as { text?: string } | null)?.text === "Berta Beispiel" && vorZ !== null && nachZ !== null && nachZ.stand === vorZ.stand + 1
+        && dateiZ !== null && dateiZ.stand === nachZ.stand && klartextWeg
+        && Boolean(fortschritt) && /1 of 2 devices have caught up/.test(fortschritt!) && /key stand 0; the current stand is 1/.test(fortschritt!),
+      `Liste=${q(liste)}, gewählt=${gewaehlt}, Warndialog=${q(warndialog ? { titel: warndialog.titel, zerstoerend: warndialog.zerstoerend } : null)} Inhalt ok=${warnOk}, restore=${q(vergessen)}, Berta=${q(bertaNoch)}, Stand ${vorZ?.stand ?? null} -> ${nachZ?.stand ?? null}, Datei Stand=${dateiZ?.stand ?? null}, ohne Klartext der Person (Berta als Gegenprobe lesbar)=${klartextWeg}, Reiter=${q(fortschritt ? fortschritt.slice(0, 160) : null)}`);
+    await clearNotices(cdp);
+
+    // --- D ---
+    console.log("\nD · Gerät entfernen");
+    const entfernenKnopf = `document.querySelector(".pseu-devices-panel .pseu-device-remove")`;
+    const dKnopf = await pollUntil<boolean>(cdp, `return Boolean(${entfernenKnopf});`, 8000, 250);
+    const dEigene = await cdp.evaluate<number>(`return Array.from(document.querySelectorAll(".pseu-devices-panel .pseu-device")).filter((z) => z.textContent.includes("this device") && z.querySelector(".pseu-device-remove")).length;`);
+    const dGeklickt = dKnopf ? await clickReal(cdp, entfernenKnopf) : false;
+    const dFrage = dGeklickt ? await pollUntil<{ titel: string; text: string }>(cdp, MODAL_INFO, 8000, 250) : null;
+    const dFrageOk = Boolean(dFrage) && dFrage!.titel === 'Remove device "iPhone (Treiber)"?' && /cannot be read/.test(dFrage!.text) && /lost with it/.test(dFrage!.text);
+    const dBestaetigt = dFrageOk ? await klickeKnopf(cdp, "Remove device") : false;
+    const dWeg = dBestaetigt ? await pollUntil<boolean>(cdp, `return document.querySelectorAll(".pseu-devices-panel .pseu-device").length === 1;`, 10_000, 250) : null;
+    const nachD = await zustandsInfo(cdp, info.basePath);
+    record("D Gerät entfernen: Knopf im Reiter, Warnung bei nicht lesbarer Fassung, danach ist die fremde Datei weg und die eigene bleibt",
+      Boolean(dKnopf) && dEigene === 0 && dGeklickt && dFrageOk && dBestaetigt && Boolean(dWeg) && nachD.state === "ready"
+        && !nachD.dateien.includes(`${FREMD_GERAET}.pseudo`) && nachD.dateien.includes(`${eigeneId}.pseudo`),
+      `Knopf da=${Boolean(dKnopf)}, Knopf an der eigenen Zeile=${dEigene}, Dialog=${q(dFrage ? dFrage.titel : null)} Warnung ok=${dFrageOk}, bestätigt=${dBestaetigt}, Zeile weg=${Boolean(dWeg)}, Dateien=${q(nachD.dateien)}`);
     await clearNotices(cdp);
   } finally {
     await zustand.schliesse();
