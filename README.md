@@ -126,12 +126,13 @@ Each of these is known and not hidden.
 
 - File names: placeholders in a file name can be found again only with a delimiter; the way back turns an underscore next to a replaced place into a hyphen, so the restored name is not byte-identical (`Rechnung_max@example.org.pdf` becomes `Rechnung-max@example.org.pdf`). The extension is never read. A mail address with a hyphen in its local part is read from the last hyphen on in a file name.
 - "Keep here" hangs on the note path. Renaming the note loses it.
-- Properties: a property whose value is not plain text or a flat list (nested values, block scalars, continuation lines, a comment in the value) is **left out and reported by name** in the notice, never rewritten; its lines stay byte-equal. The plugin only treats a property as plain when Obsidian's own reading of it equals what the plugin read. Dates, times, booleans and `null` never go to the finding.
+- Properties: a property whose value is not plain text or a flat list (nested values, block scalars, continuation lines, a comment in the value) is **left out and reported by name** in the notice, never rewritten; its lines stay byte-equal. The plugin only treats a property as plain when Obsidian's own reading (`parseYaml`) of the front matter block of the text being changed equals what the plugin read. Dates, times, booleans and `null` never go to the finding.
 - A selection that touches a word character or already contains a placeholder is refused.
 
 **Keys, devices and sync**
 
-- **Replacing the key and a late sync:** other devices lock themselves through a closing file under the old chain. A device that had already turned forward past the stand of that file, because its sync was late, stays ready until it sees the file overtaken. This case is accepted and not closed.
+- **Replacing the key and a late sync:** other devices lock themselves through a closing file under the old chain. The file is written 64 stands above the highest stand the replacing device has read, so a device that had already turned forward by up to 64 stands because its sync was late still opens it with its own key and locks itself. Only a device further ahead than that cannot open the file and stays ready; entering its code on the replacing device is refused as soon as any closing file of that chain lies in the folder. This case is accepted and not closed.
+- **Copy with plain text and the front matter:** plain text is put back only where the plugin would also replace it. In the front matter every property value is checked on its own: a value that is an address (`cover: https://…`), a wikilink or code keeps its placeholder; keys, list markers, continuation lines and comment lines are never restored.
 - A removed device loses whatever only it knew if its file could not be read any more.
 - Two devices that forget at the same time may need to turn forward once more; the plugin does that by itself.
 - Whether Obsidian Sync transfers files with the extension `.pseudo` is **not measured yet** (measurement still to be done). The plugin cannot check it, and says so during setup.
