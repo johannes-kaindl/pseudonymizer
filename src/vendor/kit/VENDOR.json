@@ -2,9 +2,9 @@
   "source": "code-kit",
   "version": "0.82.0",
   "sha": "4e12a8e",
-  "vendored": "fold-case.ts, i18n.ts, phone.ts, placeholder.ts, placeholder-table.ts, recovery-code.ts, rel-path.ts, secrets.ts, clipboard.ts",
+  "vendored": "error-message.ts, fold-case.ts, i18n.ts, phone.ts, placeholder.ts, placeholder-table.ts, recovery-code.ts, rel-path.ts, rotation.ts, secrets.ts, clipboard.ts, key-envelope.ts, key-ratchet.ts",
   "license": "AGPL-3.0-or-later",
-  "obsidian_kit_version": "0.99.1",
-  "obsidian_kit_sha": "d5efe78",
-  "obsidian_kit_vendored": "pseudonymizer-source.ts"
+  "obsidian_kit_version": "0.102.0",
+  "obsidian_kit_sha": "c8312d9",
+  "obsidian_kit_vendored": "plugin-id.ts, pseudonymizer-source.ts, vault-path.ts"
 }

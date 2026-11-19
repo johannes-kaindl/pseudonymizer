@@ -1,16 +1,37 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import PseudonymizerPlugin from "../src/main";
 import type { Engine } from "../src/core/engine";
 import { isPseudonymizerApi } from "../src/vendor/kit/pseudonymizer-source";
 import { PseudonymizerSettingTab } from "../src/obsidian/settings-tab";
+import { FakeFs } from "./helpers/fake-fs";
+import { CHAIN, ID_A, contentAt, personTable, seedFile } from "./helpers/store-fixtures";
+import { encodeRecoveryCode } from "../src/vendor/kit/recovery-code";
 
-function load() {
+function load(fs: FakeFs = new FakeFs("_pseudonymizer"), secrets: Map<string, string> = new Map()) {
   const store = new Map<string, unknown>();
-  const app = { loadLocalStorage: (k: string) => store.get(k) ?? null, saveLocalStorage: (k: string, v: unknown) => { store.set(k, v); }, vault: { configDir: ".obsidian" } };
+  const listeners: ((path: string) => void)[] = [];
+  const app = {
+    loadLocalStorage: (k: string) => store.get(k) ?? null,
+    saveLocalStorage: (k: string, v: unknown) => { store.set(k, v); },
+    secretStorage: { getSecret: (id: string) => secrets.get(id) ?? "", setSecret: (id: string, v: string) => { secrets.set(id, v); } },
+    workspace: { onLayoutReady: (cb: () => void) => { cb(); } },
+    vault: {
+      configDir: ".obsidian",
+      adapter: fs.adapter,
+      on: (_evt: string, cb: (f: { path: string }) => void) => { listeners.push((p) => { cb({ path: p }); }); return {}; },
+      offref: () => undefined,
+    },
+  };
   const Ctor = PseudonymizerPlugin as unknown as new (app: unknown, manifest: unknown) => PseudonymizerPlugin & { settingTabs: unknown[] };
   const plugin = new Ctor(app, { id: "pseudonymizer", name: "Pseudonymizer", version: "0.0.1" });
-  return { plugin, store };
+  return { plugin, store, fs, secrets };
 }
+const intervals: { cb: () => void; ms: number }[] = [];
+beforeEach(() => {
+  intervals.length = 0;
+  vi.stubGlobal("window", { setInterval: (cb: () => void, ms: number) => { intervals.push({ cb, ms }); return intervals.length; }, clearInterval: () => undefined });
+});
+const flush = async (): Promise<void> => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); };
 
 describe("PseudonymizerPlugin", () => {
   it("loads defaults, creates the device state and registers the settings tab", async () => {
@@ -98,5 +119,68 @@ describe("PseudonymizerPlugin", () => {
     expect(plugin.settings).toMatchObject({ folder: "_pseudonymizer", copyMode: "placeholder" });
     await plugin.saveSettings();
     expect(JSON.stringify(await plugin.loadData())).not.toContain("Mustermann");
+  });
+
+  it("opens the device files at start: a key and a readable file make the plugin ready, and the engine persists through the store", async () => {
+    const fs = new FakeFs("_pseudonymizer");
+    await seedFile(fs, { deviceId: "dev-seed", stand: 0, table: personTable(ID_A, "Max Mustermann") });
+    const secrets = new Map<string, string>();
+    const code = encodeRecoveryCode(await contentAt(CHAIN, 0));
+    if (!code.ok) throw new Error("fixture");
+    secrets.set("pseudonymizer-key", code.code);
+    const { plugin } = load(fs, secrets);
+    await plugin.onload();
+    await flush();
+    expect(plugin.state()).toBe("ready");
+    const engine = plugin.engine as unknown as { persist(c?: unknown): Promise<unknown>; refresh(): Promise<void> };
+    expect(await engine.persist(personTable("m4t8c6r2vp", "Berta Beispiel"))).toBeUndefined();
+    expect(fs.names().filter((n) => n.endsWith(".pseudo"))).toHaveLength(2);
+  });
+  it("refreshes over all files at least every 60 seconds and picks up a file that arrived without an event", async () => {
+    const fs = new FakeFs("_pseudonymizer");
+    await seedFile(fs, { deviceId: "dev-seed", stand: 0, table: personTable(ID_A, "Max Mustermann") });
+    const secrets = new Map<string, string>();
+    const code = encodeRecoveryCode(await contentAt(CHAIN, 0));
+    if (!code.ok) throw new Error("fixture");
+    secrets.set("pseudonymizer-key", code.code);
+    const { plugin } = load(fs, secrets);
+    await plugin.onload();
+    await flush();
+    const tick = intervals.find((i) => i.ms === 60_000);
+    expect(tick).toBeDefined();
+    await seedFile(fs, { deviceId: "dev-late", stand: 0, table: personTable("m4t8c6r2vp", "Berta Beispiel") });
+    tick?.cb();
+    await flush();
+    const table = plugin.memory.table();
+    expect(table?.entries.map((e) => e.id).sort()).toEqual(["k3x9m2ab7q", "m4t8c6r2vp"]);
+  });
+  it("a key without any readable file is locked, not an empty table, and nothing is written", async () => {
+    const fs = new FakeFs("_pseudonymizer");
+    const secrets = new Map<string, string>();
+    const code = encodeRecoveryCode(await contentAt(CHAIN, 0));
+    if (!code.ok) throw new Error("fixture");
+    secrets.set("pseudonymizer-key", code.code);
+    const { plugin } = load(fs, secrets);
+    await plugin.onload();
+    await flush();
+    expect(plugin.api.status()).toEqual({ state: "locked" });
+    expect(fs.mutations).toBe(0);
+  });
+  it("changing the folder in the settings starts over at the new folder", async () => {
+    const fs = new FakeFs("_pseudonymizer");
+    await seedFile(fs, { deviceId: "dev-seed", stand: 0, table: personTable(ID_A, "Max Mustermann") });
+    const secrets = new Map<string, string>();
+    const code = encodeRecoveryCode(await contentAt(CHAIN, 0));
+    if (!code.ok) throw new Error("fixture");
+    secrets.set("pseudonymizer-key", code.code);
+    const { plugin } = load(fs, secrets);
+    await plugin.onload();
+    await flush();
+    expect(plugin.state()).toBe("ready");
+    plugin.settings.folder = "elsewhere";
+    await plugin.saveSettings();
+    await flush();
+    expect(plugin.api.status()).toEqual({ state: "locked" });
+    expect(plugin.memory.reason()).toBe("table-missing");
   });
 });

@@ -1,7 +1,7 @@
 {
   "sources": {
     "obsidian-kit": {
-      "ref": "0.99.1"
+      "ref": "0.102.0"
     },
     "code-kit": {
       "ref": "0.82.0"
@@ -13,6 +13,7 @@
       "source": "code-kit",
       "from": "src/ts/pure",
       "modules": [
+        "error-message",
         "fold-case",
         "i18n",
         "phone",
@@ -20,6 +21,7 @@
         "placeholder-table",
         "recovery-code",
         "rel-path",
+        "rotation",
         "secrets"
       ]
     },
@@ -28,7 +30,9 @@
       "source": "code-kit",
       "from": "src/ts/web",
       "modules": [
-        "clipboard"
+        "clipboard",
+        "key-envelope",
+        "key-ratchet"
       ],
       "rewrite": [
         [
@@ -42,7 +46,9 @@
       "source": "obsidian-kit",
       "from": "src/pure",
       "modules": [
-        "pseudonymizer-source"
+        "plugin-id",
+        "pseudonymizer-source",
+        "vault-path"
       ]
     },
     {
@@ -52,10 +58,13 @@
       "modules": [
         "clipboard",
         "confirm",
+        "device-files",
+        "file-snapshot",
         "folder-suggest",
         "help-setting",
         "hub",
         "prompt-text",
+        "replace-file-safely",
         "secrets",
         "segmented-control",
         "status-bar-item",

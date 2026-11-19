@@ -1,7 +1,7 @@
 {
   "source": "obsidian-kit",
-  "version": "0.99.1",
-  "sha": "d5efe78",
-  "vendored": "clipboard.ts, confirm.ts, folder-suggest.ts, help-setting.ts, hub.ts, prompt-text.ts, secrets.ts, segmented-control.ts, status-bar-item.ts, status-indicator.ts",
+  "version": "0.102.0",
+  "sha": "c8312d9",
+  "vendored": "clipboard.ts, confirm.ts, device-files.ts, file-snapshot.ts, folder-suggest.ts, help-setting.ts, hub.ts, prompt-text.ts, replace-file-safely.ts, secrets.ts, segmented-control.ts, status-bar-item.ts, status-indicator.ts",
   "license": "AGPL-3.0-or-later"
 }
