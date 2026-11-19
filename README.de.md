@@ -8,6 +8,8 @@
 [![Docs: CC BY-SA 4.0](https://img.shields.io/badge/docs-CC%20BY--SA%204.0-lightgrey.svg)](LICENSE-DOCS)
 ![Platform](https://img.shields.io/badge/platform-Obsidian%201.13.0%2B%20%C2%B7%20Desktop%20%26%20Mobil-7c3aed)
 
+<p align="center"><img src="https://raw.githubusercontent.com/johannes-kaindl/pseudonymizer/main/docs/images/hero.png" width="820" alt="Dieselbe Notiz zweimal: links die Datei im Quelltext mit Platzhaltern, rechts die Lesesicht mit eingeblendetem Klartext"></p>
+
 > [!warning]
 > Pseudonymizer ist in Bau und noch nicht veröffentlicht. Es gibt weder ein Release noch einen Tag noch einen Store-Eintrag. Nichts in diesem Repository ist bereit, echte Daten zu schützen.
 
@@ -50,7 +52,13 @@ Alles Folgende ist ein Befehl in der Befehlspalette. Jeder Befehl trägt ein Sym
 
 **Pseudonymisieren.** *Auswahl pseudonymisieren* fragt, was die Auswahl ist und wem sie gehört. *Diese Notiz pseudonymisieren* geht durch den Text und die Text-Eigenschaften und öffnet das Prüffenster: eine Karte je Wert mit *Ersetzen*, *Hier lassen* (nur in dieser Notiz, wird gemerkt) und *Immer lassen* (Ausnahmeliste), dazu *Gehört zu* (eine vorhandene Person, eine neue oder niemand) und ein Weg, weitere Stellen von Hand zu markieren. Abbrechen und Esc schreiben nichts, weder in die Notiz noch in die Tabelle. Die Notiz wird in einem Schritt geschrieben, und nur, wenn sie sich inzwischen nicht geändert hat. Das Plugin legt keinen Schnappschuss an, weil er im Klartext herumläge; der Weg zurück ist Obsidians Rückgängig und der Dateiverlauf. Eine Notiz, die von mailstone kommt, fasst der Befehl nicht an; dafür gilt mailstones eigenes „Neu rendern“.
 
+<img src="https://raw.githubusercontent.com/johannes-kaindl/pseudonymizer/main/docs/images/review.png" width="600" alt="Das Prüffenster: zwei neue Fundstellen, je mit den Wegen Ersetzen, Hier lassen und Immer lassen und der Wahl, wem der Wert gehört (Oberfläche englisch)">
+
 **Personen und Geräte.** *Personen und Geräte öffnen* hat drei Reiter. *Personen* sucht über jede Form eines Wertes, zeigt Werte und Formen eines Eintrags, führt zwei Einträge zusammen (beide Kennungen lösen weiter auf; diese Version trennt sie nicht wieder), hängt einen Wert ab und startet das Vergessen. *Ausnahmen* ist die Liste der Texte, die nie ersetzt werden. *Geräte und Schlüssel* zeigt den Stand je Gerät, den Stand des gesicherten Wiederherstellungs-Codes und was nach einem Vergessen noch fehlt. *Suchen mit Klarnamen* öffnet Obsidians Suche mit allen Platzhaltern eines Eintrags; der Suchindex selbst bleibt frei von Klartext. *Platzhalter nachschlagen* zeigt, für wen ein Platzhalter steht.
+
+<img src="https://raw.githubusercontent.com/johannes-kaindl/pseudonymizer/main/docs/images/persons.png" width="600" alt="Der Reiter Personen mit einem geöffneten Eintrag: Name, Mailadresse und Telefonnummer, je mit Platzhalter und Knopf zum Abhängen (Oberfläche englisch)">
+
+<img src="https://raw.githubusercontent.com/johannes-kaindl/pseudonymizer/main/docs/images/devices.png" width="600" alt="Der Reiter Geräte und Schlüssel: dieses Gerät und ein zweites, beide gelesen, mit dem gesicherten Code und den Knöpfen für Schlüssel und Vergessen (Oberfläche englisch)">
 
 **Person vergessen.** *Person vergessen* fragt nach Bestätigung und listet die Werte, die unlesbar werden, damit du einen Wert, der jemand anderem gehört, vorher abhängen kannst. Dann markiert dieses Gerät die Kennungen des Eintrags als vergessen, entfernt die Werte aus seiner Fassung, dreht den Schlüssel einen Schritt weiter und schreibt seine Gerätedatei neu. Jedes andere Gerät zieht beim nächsten Lesen nach. Wann eine Person vollständig vergessen ist, steht unten.
 

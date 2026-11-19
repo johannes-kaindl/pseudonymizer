@@ -8,6 +8,8 @@
 [![Docs: CC BY-SA 4.0](https://img.shields.io/badge/docs-CC%20BY--SA%204.0-lightgrey.svg)](LICENSE-DOCS)
 ![Platform](https://img.shields.io/badge/platform-Obsidian%201.13.0%2B%20%C2%B7%20desktop%20%26%20mobile-7c3aed)
 
+<p align="center"><img src="https://raw.githubusercontent.com/johannes-kaindl/pseudonymizer/main/docs/images/hero.png" width="820" alt="The same note twice: on the left the file in source mode with placeholders, on the right the reading view showing the plain text"></p>
+
 > [!warning]
 > Pseudonymizer is under construction and not published yet. There is no release, no tag and no store entry. Nothing in this repository is ready to protect real data.
 
@@ -50,7 +52,13 @@ Everything below is a command in the command palette. Commands carry an icon, so
 
 **Pseudonymize.** *Pseudonymize selection* asks what the selection is and whom it belongs to. *Pseudonymize this note* looks through the text and the text properties and opens the review window: one card per value with *Replace*, *Keep here* (this note only, remembered) and *Always keep* (exception list), plus *Belongs to* (an existing person, a new one or nobody) and a way to mark further places by hand. Cancel and Esc write nothing, neither to the note nor to the table. The note is written in one step, and only if it did not change while you decided. The plugin keeps no snapshot, because that would lie around in plain text; Obsidian's undo and file history are the way back. A note that comes from mailstone is not touched here; use mailstone's own re-render.
 
+<img src="https://raw.githubusercontent.com/johannes-kaindl/pseudonymizer/main/docs/images/review.png" width="600" alt="The review window: two new findings, each with the ways Replace, Keep here and Always keep and a choice of whom it belongs to">
+
 **Persons and devices.** *Open persons and devices* has three tabs. *Persons* searches by any form of a value, shows values and forms of an entry, merges two entries (both identifiers keep resolving; this version does not split them again), detaches a value and starts forgetting. *Exceptions* is the list of texts that are never replaced. *Devices and keys* shows the state per device, the state of the saved recovery code and what is still missing after a forgetting. *Search by plain name* opens Obsidian's search with all placeholders of an entry; the search index itself stays free of plain text. *Look up placeholder* shows who a placeholder stands for.
+
+<img src="https://raw.githubusercontent.com/johannes-kaindl/pseudonymizer/main/docs/images/persons.png" width="600" alt="The tab Persons with one entry opened: name, mail address and phone number, each with its placeholder and a button to detach the value">
+
+<img src="https://raw.githubusercontent.com/johannes-kaindl/pseudonymizer/main/docs/images/devices.png" width="600" alt="The tab Devices and keys: this device and a second device, both read, with the saved recovery code and the buttons for key and forgetting">
 
 **Forget a person.** *Forget person* asks for confirmation and lists the values that become unreadable, so you can detach a value that belongs to someone else first. Then this device marks the identifiers of the entry as forgotten, removes the values from its version, turns the key one step forward and writes its device file again. Every other device follows the next time it reads. See below for when a person is forgotten completely.
 
