@@ -28,18 +28,19 @@ export interface CommandHost {
   /** Person vergessen und Schlüssel ersetzen (`forget.ts`, `key-actions.ts`); sie melden dem Nutzer selbst, was geschah. */
   runForget(): Promise<void>;
   runReplaceKey(): Promise<void>;
+  /** Auswahl und Notiz pseudonymisieren (`note-actions.ts`); sie melden dem Nutzer selbst, was geschah. */
+  runPseudonymizeSelection(): Promise<void>;
+  runPseudonymizeNote(): Promise<void>;
   /** Sagt Statusleiste und Ansicht, dass sich etwas geändert hat. */
   emitChange(): void;
 }
 
-const notAvailable = (): void => { new Notice(t("notice.notAvailable")); };
-
-/** Befehle, deren Funktion noch fehlt, zeigen die Notice „noch nicht verfügbar“; jede spätere Aufgabe ersetzt ihre Zeile. */
+/** Welcher Ablauf zu welchem Befehl gehört. */
 const HANDLERS: Record<CommandId, (host: CommandHost) => void> = {
   "toggle-plaintext": (h) => { h.device.setShowPlaintext(!h.device.showPlaintext); h.emitChange(); },
   "open-view": (h) => { void h.openView(); },
-  "pseudonymize-selection": notAvailable,
-  "pseudonymize-note": notAvailable,
+  "pseudonymize-selection": (h) => { void h.runPseudonymizeSelection(); },
+  "pseudonymize-note": (h) => { void h.runPseudonymizeNote(); },
   "search-plaintext": (h) => { void searchPlaintextCommand(h); },
   "lookup-placeholder": (h) => { void lookupPlaceholderCommand(h); },
   "copy-plaintext": (h) => { void copyCommand(h, "plaintext"); },

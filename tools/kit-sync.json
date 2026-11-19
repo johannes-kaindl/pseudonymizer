@@ -30,7 +30,8 @@
         "rel-path",
         "replaceable-spans",
         "rotation",
-        "secrets"
+        "secrets",
+        "text-window"
       ]
     },
     {
@@ -54,9 +55,19 @@
       "source": "obsidian-kit",
       "from": "src/pure",
       "modules": [
+        "block-writer",
+        "frontmatter",
+        "frontmatter-patch",
+        "note-edit",
         "plugin-id",
         "pseudonymizer-source",
         "vault-path"
+      ],
+      "rewrite": [
+        [
+          "../vendor/code-kit/pure/",
+          "./"
+        ]
       ]
     },
     {
@@ -64,6 +75,7 @@
       "source": "obsidian-kit",
       "from": "src/obsidian",
       "modules": [
+        "choice-modal",
         "clipboard",
         "confirm",
         "device-files",
@@ -80,7 +92,8 @@
         "segmented-control",
         "status-bar-item",
         "status-indicator",
-        "text-swap"
+        "text-swap",
+        "write-ports"
       ],
       "rewrite": [
         [

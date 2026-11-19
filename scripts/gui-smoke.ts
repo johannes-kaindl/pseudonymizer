@@ -74,6 +74,12 @@ const PUNKTE = [
   "B3 Wege und übernehmen: „Hier lassen“ lässt den Namen stehen und gilt nur für denselben documentKey, die Nummer wird ersetzt und steht in der Gerätedatei auf der Platte (mit dem Schlüssel geöffnet), die Platte änderte sich erst mit „übernehmen“",
   "B4 Text ansehen und markieren: eine Auswahl im Text wird als Person hinzugefügt, jede freie Stelle wird eine Karte und nach „übernehmen“ mit einer Kennung ersetzt, ein längeres Wort bleibt",
   "B5 Bilder des Prüffensters: Desktop und 402 px Breite (am Telefon bildschirmfüllend, Wege als Tippflächen von mindestens 44 px gemessen); die Bilder sind selbst anzusehen",
+  "NA1 Auswahl pseudonymisieren im Quelltext: Art und Person gewählt, die Auswahl wird durch einen Platzhalter ersetzt, die Datei auf der Platte folgt, restore löst ihn auf, ein Rückgängig stellt den Text her",
+  "NA2 Auswahl pseudonymisieren in Live Preview: dasselbe Ergebnis wie im Quelltext",
+  "NA3 Diese Notiz pseudonymisieren mit Prüffenster und „übernehmen“: Frontmatter und Text in genau einem Schreibvorgang der Notiz, die Eigenschaft up mit dem Wikilink bleibt byte-gleich, from und cc ungequotet mit den Platzhaltern, kein Klartext mehr in der Notiz",
+  "NA4 Der Eigenschaften-Bereich zeigt den Wert von from und den Listeneintrag von cc zeichengleich zur Datei",
+  "NA5 Diese Notiz pseudonymisieren, im Prüffenster abgebrochen: die Notiz ist byte-gleich, die Notice nennt den Abbruch ohne Klartext",
+  "NA6 Eine Notiz mit mail_id bleibt unberührt, es öffnet kein Prüffenster, die Notice verweist auf mailstone",
 ] as const;
 
 const bilanz = createBilanz({ punkte: PUNKTE });
@@ -257,12 +263,13 @@ const MAX = FREMD_PLATZHALTER;
 const WURZEL = (pfad: string): string => `document.querySelector('[data-pseu-smoke=${q(pfad)}]')`;
 
 /** Öffnet eine vorhandene Fixture-Notiz in einem neuen Tab (nie `modify`) und wartet auf ihre Ersatz-Stellen. `modus` `preview` ist die Lesesicht. */
-async function oeffneNotiz(cdp: Cdp, pfad: string, modus: "preview" | "source", ersatzStellen: number): Promise<boolean> {
+async function oeffneNotiz(cdp: Cdp, pfad: string, modus: "preview" | "source", ersatzStellen: number, quelltext?: boolean): Promise<boolean> {
+  // `quelltext` true: Quelltext-Modus, false: Live Preview (nur bei `modus` `source`); ohne Angabe gilt die Einstellung des Vaults.
   await cdp.evaluate(`
     const f = app.vault.getAbstractFileByPath(${q(pfad)});
     if (!f) return false;
     const leaf = app.workspace.getLeaf("tab");
-    await leaf.openFile(f, { state: { mode: ${q(modus)} } });
+    await leaf.openFile(f, { state: { mode: ${q(modus)}${quelltext === undefined ? "" : `, source: ${String(quelltext)}`} } });
     leaf.view.containerEl.setAttribute("data-pseu-smoke", ${q(pfad)});
     app.workspace.setActiveLeaf(leaf, { focus: true });
     return true;
@@ -423,6 +430,45 @@ function pdfText(datei: string): string | null {
   try { return execFileSync("pdftotext", [datei, "-"], { encoding: "utf8" }); } catch { return null; }
 }
 
+// ---- Auswahl und Notiz pseudonymisieren (Aufgabe 15) ----
+
+/** Erfundene Notizen, vom Treiber angelegt (Namen mit Präfix `Smoke-`) und am Ende gelöscht. Berta Beispiel steht aus der fremden Fassung in der Tabelle (bekannter Name), ihre Adresse nicht. */
+const NA_AUSWAHL = "Hallo, Erika Musterfrau schrieb gestern.\n";
+const NA_NOTIZ = ["---", "from: Berta Beispiel <berta@example.org>", 'up: "[[Berta Beispiel]]"', "cc:", "  - Berta Beispiel", "---", "Hallo Berta Beispiel, schreib an berta@example.org.", ""].join("\n");
+const NA_MAIL = "---\nmail_id: smoke-na-1\nfrom: Berta Beispiel <berta@example.org>\n---\nHallo Berta Beispiel,\n";
+const LEGE_NOTIZ_AN = (pfad: string, inhalt: string): string => `
+  const alt = app.vault.getAbstractFileByPath(${q(pfad)});
+  if (alt) await app.vault.delete(alt);
+  await app.vault.create(${q(pfad)}, ${q(inhalt)});
+  return true;
+`;
+const LOESCHE_SMOKE_NOTIZEN = `
+  for (const f of app.vault.getMarkdownFiles().filter((x) => x.name.startsWith("Smoke-"))) await app.vault.delete(f);
+  return true;
+`;
+/** Wählt `text` im Editor der vom Treiber geöffneten Notiz und macht das Blatt aktiv; liefert die Auswahl, wie der Editor sie kennt. */
+const WAEHLE_TEXT = (pfad: string, text: string): string => `
+  const leaf = ${BLATT(pfad)};
+  if (!leaf) return "";
+  const ed = leaf.view.editor;
+  const i = ed.getValue().indexOf(${q(text)});
+  if (i < 0) return "";
+  app.workspace.setActiveLeaf(leaf, { focus: true });
+  ed.setSelection(ed.offsetToPos(i), ed.offsetToPos(i + ${q(text)}.length));
+  return ed.getSelection();
+`;
+const EDITOR_TEXT = (pfad: string): string => `const l = ${BLATT(pfad)}; return l ? l.view.editor.getValue() : null;`;
+const PLATTE_TEXT = (pfad: string): string => `const f = app.vault.getAbstractFileByPath(${q(pfad)}); return f ? await app.vault.adapter.read(f.path) : null;`;
+/** Die Platte trägt genau `erwartet` (sonst `null`, damit `pollUntil` weiterfragt). */
+const PLATTE_GLEICH = (pfad: string, erwartet: string): string => `const f = app.vault.getAbstractFileByPath(${q(pfad)}); if (!f) return null; const t = await app.vault.adapter.read(f.path); return t === ${q(erwartet)} ? t : null;`;
+/** Die Platte trägt den Text, in dem `altes` nicht mehr vorkommt (die Notiz wurde umgeschrieben). */
+const PLATTE_GEAENDERT = (pfad: string, altes: string): string => `const f = app.vault.getAbstractFileByPath(${q(pfad)}); if (!f) return null; const t = await app.vault.adapter.read(f.path); return t.includes(${q(altes)}) ? null : t;`;
+/** Der Text der ersten Notice, die `teil` enthält (sonst `null`). */
+const NOTICE_MIT = (teil: string): string => `const n = Array.from(document.querySelectorAll(".notice")).map((e) => e.textContent).find((t) => t.includes(${q(teil)})); return n || null;`;
+const LETZTER_KNOPF = `(Array.from(document.querySelectorAll(".modal.pseu-review-modal .modal-button-container button")).pop() || null)`;
+/** Die erste Zeile des Vorschlagsdialogs (immer „neu“). */
+const ERSTER_VORSCHLAG = `(document.querySelector(".prompt .suggestion-item") || null)`;
+
 // ---- Prüffenster (Aufgabe 14) ----
 
 /** Das Prüffenster mit allem, was die Punkte B1 bis B5 lesen. */
@@ -485,6 +531,7 @@ async function main(): Promise<void> {
       await cdp.evaluate(`for (const l of app.workspace.getLeavesOfType("pseudonymizer-view")) l.detach(); return true;`);
       // Aufgabe 16: Notizen und Popout-Fenster des Treibers zu, Schalter und Einstellung zurück, Zwischenablage und Speicherdialog wiederherstellen, Netzmitschnitt aus.
       await cdp.evaluate(SCHLIESSE_NOTIZEN);
+      await cdp.evaluate(LOESCHE_SMOKE_NOTIZEN);
       await cdp.evaluate(SCHALTER_ZURUECK);
       await cdp.evaluate(ZWISCHENABLAGE_AUS);
       await cdp.evaluate(`if (window.__pseuSaveOrig) { window.require("electron").remote.dialog.showSaveDialog = window.__pseuSaveOrig; delete window.__pseuSaveOrig; } return true;`);
@@ -1248,6 +1295,114 @@ async function main(): Promise<void> {
     await clearNotices(cdp);
     await setWindowSize(cdp, fensterVorher[0] ?? 1200, fensterVorher[1] ?? 800);
     console.log(`  Bilder des Prüffensters: ${bilderDir}`);
+
+    // --- NA: Auswahl und Notiz pseudonymisieren (Aufgabe 15) ---
+    // Geschrieben, noch nicht gelaufen (Rechner unter Last). Stand hier: bereit, Berta Beispiel ist bekannt (Name), ihre Adresse nicht. Die Notizen legt der Treiber selbst an (Präfix `Smoke-`) und löscht sie am Ende und im Aufräumen.
+    console.log("\nNA · Auswahl und Notiz pseudonymisieren");
+    await cdp.evaluate(LOESCHE_SMOKE_NOTIZEN);
+    const schluesselNA = await leseSchluessel(cdp);
+    const erkennbar = (id: string): string => `Hallo, ${id} schrieb gestern.\n`;
+    const restoreVon = (text: string): Promise<{ text?: string; error?: string } | null> =>
+      cdp.evaluate(`return ${P}.api.restore(${q(text)}, { caller: "gui-smoke" });`);
+
+    // NA1 und NA2: dieselbe Abfolge im Quelltext und in Live Preview
+    const auswahlLauf = async (pfad: string, quelltext: boolean): Promise<{ ok: boolean; detail: string }> => {
+      await cdp.evaluate(LEGE_NOTIZ_AN(pfad, NA_AUSWAHL));
+      const offen = await oeffneNotiz(cdp, pfad, "source", 0, quelltext);
+      const gewaehlt = offen ? await cdp.evaluate<string>(WAEHLE_TEXT(pfad, "Erika Musterfrau")) : "";
+      if (gewaehlt !== "Erika Musterfrau") return { ok: false, detail: `Auswahl=${q(gewaehlt)}` };
+      await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:pseudonymize-selection`)}); return true;`);
+      const art = await pollUntil<boolean>(cdp, `return Array.from(document.querySelectorAll(".modal button")).some((b) => b.textContent.trim() === "Person") ? true : null;`, 8000, 200);
+      const artGeklickt = art ? await klickeKnopf(cdp, "Person") : false;
+      const vorschlag = artGeklickt ? await pollUntil<boolean>(cdp, `return ${ERSTER_VORSCHLAG} ? true : null;`, 8000, 200) : null;
+      const gewaehltPerson = vorschlag ? await clickReal(cdp, ERSTER_VORSCHLAG) : false;
+      const ersetzt = gewaehltPerson ? await pollUntil<string>(cdp, `
+        const l = ${BLATT(pfad)};
+        const v = l ? l.view.editor.getValue() : "";
+        return /^Hallo, Person_[0-9a-z]{10} schrieb gestern\\.\\n$/.test(v) ? v : null;
+      `, 10_000, 250) : null;
+      // Die Platte folgt dem Editor (Obsidian speichert nach rund zwei Sekunden).
+      const platte = ersetzt ? await pollUntil<string>(cdp, PLATTE_GLEICH(pfad, ersetzt), 8000, 250) : null;
+      const zurueck = ersetzt ? await restoreVon(ersetzt) : null;
+      const id = ersetzt ? /Person_[0-9a-z]{10}/.exec(ersetzt)?.[0] ?? "" : "";
+      await cdp.evaluate(`const l = ${BLATT(pfad)}; if (l) l.view.editor.undo(); return true;`);
+      const nachUndo = await cdp.evaluate<string | null>(EDITOR_TEXT(pfad));
+      const ok = Boolean(art) && artGeklickt && Boolean(vorschlag) && gewaehltPerson && ersetzt !== null && platte === ersetzt
+        && zurueck !== null && zurueck.text === erkennbar("Erika Musterfrau") && nachUndo === NA_AUSWAHL && id !== "";
+      return { ok, detail: `Dialoge: Art=${Boolean(art)}, Person=${Boolean(vorschlag)}; Editor=${q(ersetzt)}, Platte folgt=${platte !== null}, restore=${q(zurueck?.text ?? zurueck)}, nach Rückgängig=${q(nachUndo)}` };
+    };
+    const na1 = schluesselNA ? await auswahlLauf("Smoke-Auswahl-Quelltext.md", true) : { ok: false, detail: "kein Schlüssel" };
+    record("NA1 Auswahl pseudonymisieren im Quelltext: Art und Person gewählt, die Auswahl wird durch einen Platzhalter ersetzt, die Datei auf der Platte folgt, restore löst ihn auf, ein Rückgängig stellt den Text her", na1.ok, na1.detail);
+    await cdp.evaluate(SCHLIESSE_NOTIZEN);
+    await clearNotices(cdp);
+    const na2 = schluesselNA ? await auswahlLauf("Smoke-Auswahl-LivePreview.md", false) : { ok: false, detail: "kein Schlüssel" };
+    record("NA2 Auswahl pseudonymisieren in Live Preview: dasselbe Ergebnis wie im Quelltext", na2.ok, na2.detail);
+    await cdp.evaluate(SCHLIESSE_NOTIZEN);
+    await clearNotices(cdp);
+
+    // NA3: Notiz mit Frontmatter, Prüffenster, übernehmen; die Notiz ist in der Lesesicht offen (Weg über `vault.process`), gezählt werden die modify-Ereignisse
+    const NOTIZ = "Smoke-Notiz.md";
+    await cdp.evaluate(LEGE_NOTIZ_AN(NOTIZ, NA_NOTIZ));
+    const na3offen = await oeffneNotiz(cdp, NOTIZ, "preview", 0);
+    await cdp.evaluate(`window.__pseuMod = 0; window.__pseuModRef = app.vault.on("modify", (f) => { if (f.path === ${q(NOTIZ)}) window.__pseuMod += 1; }); return true;`);
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:pseudonymize-note`)}); return true;`);
+    const na3fenster = na3offen ? await pollUntil<boolean>(cdp, `return document.querySelector(".modal.pseu-review-modal") ? true : null;`, 10_000, 250) : null;
+    const na3apply = na3fenster ? await clickReal(cdp, LETZTER_KNOPF) : false;
+    const na3text = na3apply ? await pollUntil<string>(cdp, PLATTE_GEAENDERT(NOTIZ, "Berta Beispiel <"), 10_000, 250) : null;
+    await new Promise((r) => setTimeout(r, 2500));
+    const modifys = await cdp.evaluate<number>(`app.vault.offref(window.__pseuModRef); return window.__pseuMod;`);
+    const na3 = na3text === null ? null : /^---\nfrom: Person_m4t8c6r2vp <(Mail_[0-9a-z]{10})>\nup: "\[\[Berta Beispiel\]\]"\ncc:\n {2}- Person_m4t8c6r2vp\n---\nHallo Person_m4t8c6r2vp, schreib an (Mail_[0-9a-z]{10})\.\n$/.exec(na3text);
+    record("NA3 Diese Notiz pseudonymisieren mit Prüffenster und „übernehmen“: Frontmatter und Text in genau einem Schreibvorgang der Notiz, die Eigenschaft up mit dem Wikilink bleibt byte-gleich, from und cc ungequotet mit den Platzhaltern, kein Klartext mehr in der Notiz",
+      Boolean(na3offen) && Boolean(na3fenster) && na3apply && na3 !== null && na3[1] === na3[2] && modifys === 1 && !/Berta Beispiel|berta@/i.test((na3text ?? "").replace('up: "[[Berta Beispiel]]"', "")),
+      `Fenster=${Boolean(na3fenster)}, Notiz danach=${q(na3text)}, modify-Ereignisse=${modifys}`);
+    await clearNotices(cdp);
+
+    // NA4: der Eigenschaften-Bereich zeigt die Werte zeichengleich (Live Preview, Eigenschaften im Dokument sichtbar)
+    await cdp.evaluate(SCHLIESSE_NOTIZEN);
+    const na4offen = await oeffneNotiz(cdp, NOTIZ, "source", 0, false);
+    const eigenschaften = na4offen ? await pollUntil<{ from: string; cc: string[] }>(cdp, `
+      const c = ${WURZEL(NOTIZ)};
+      const f = c ? c.querySelector('.metadata-property[data-property-key="from"]') : null;
+      if (!f) return null;
+      const feld = f.querySelector(".metadata-input-longtext, input, .metadata-property-value");
+      const cc = Array.from(c.querySelectorAll('.metadata-property[data-property-key="cc"] .multi-select-pill-content')).map((e) => e.textContent.trim());
+      return { from: feld ? (feld.value !== undefined && feld.value !== "" ? feld.value : feld.textContent.trim()) : "", cc };
+    `, 10_000, 250) : null;
+    const dateiFrom = /^from: (.*)$/m.exec(na3text ?? "")?.[1] ?? "<fehlt>";
+    record("NA4 Der Eigenschaften-Bereich zeigt den Wert von from und den Listeneintrag von cc zeichengleich zur Datei",
+      eigenschaften !== null && eigenschaften.from === dateiFrom && eigenschaften.cc.length === 1 && eigenschaften.cc[0] === "Person_m4t8c6r2vp",
+      `Datei: from=${q(dateiFrom)}; Eigenschaften-Bereich: ${q(eigenschaften)}`);
+    await cdp.evaluate(SCHLIESSE_NOTIZEN);
+
+    // NA5: Abbruch im Prüffenster
+    const ABBRUCH = "Smoke-Abbruch.md";
+    await cdp.evaluate(LEGE_NOTIZ_AN(ABBRUCH, NA_NOTIZ));
+    const na5offen = await oeffneNotiz(cdp, ABBRUCH, "preview", 0);
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:pseudonymize-note`)}); return true;`);
+    const na5fenster = na5offen ? await pollUntil<boolean>(cdp, `return document.querySelector(".modal.pseu-review-modal") ? true : null;`, 10_000, 250) : null;
+    const na5abbruch = na5fenster ? await klickeKnopf(cdp, "Cancel") : false;
+    const na5notice = na5abbruch ? await pollUntil<string>(cdp, NOTICE_MIT("Cancelled"), 5000, 200) : null;
+    const na5platte = await cdp.evaluate<string | null>(PLATTE_TEXT(ABBRUCH));
+    record("NA5 Diese Notiz pseudonymisieren, im Prüffenster abgebrochen: die Notiz ist byte-gleich, die Notice nennt den Abbruch ohne Klartext",
+      Boolean(na5fenster) && na5abbruch && na5platte === NA_NOTIZ && na5notice !== null && !/Berta|berta@/i.test(na5notice),
+      `Fenster=${Boolean(na5fenster)}, Notiz gleich=${na5platte === NA_NOTIZ}, Notice=${q(na5notice)}`);
+    await clearNotices(cdp);
+    await cdp.evaluate(SCHLIESSE_NOTIZEN);
+
+    // NA6: mailstone-Notiz
+    const MAILNOTIZ = "Smoke-Mail.md";
+    await cdp.evaluate(LEGE_NOTIZ_AN(MAILNOTIZ, NA_MAIL));
+    const na6offen = await oeffneNotiz(cdp, MAILNOTIZ, "preview", 0);
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:pseudonymize-note`)}); return true;`);
+    const na6notice = na6offen ? await pollUntil<string>(cdp, NOTICE_MIT("mailstone"), 8000, 200) : null;
+    const na6fenster = await cdp.evaluate<boolean>(`return Boolean(document.querySelector(".modal.pseu-review-modal"));`);
+    const na6platte = await cdp.evaluate<string | null>(PLATTE_TEXT(MAILNOTIZ));
+    record("NA6 Eine Notiz mit mail_id bleibt unberührt, es öffnet kein Prüffenster, die Notice verweist auf mailstone",
+      na6notice !== null && !na6fenster && na6platte === NA_MAIL,
+      `Notice=${q(na6notice)}, Prüffenster offen=${na6fenster}, Notiz gleich=${na6platte === NA_MAIL}`);
+    await clearNotices(cdp);
+    await cdp.evaluate(SCHLIESSE_NOTIZEN);
+    await cdp.evaluate(LOESCHE_SMOKE_NOTIZEN);
 
     // --- D ---
     console.log("\nD · Gerät entfernen");

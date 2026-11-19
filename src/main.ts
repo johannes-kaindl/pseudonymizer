@@ -21,6 +21,8 @@ import { createKeyStore, type KeyStore } from "./obsidian/key-store";
 import { runForget } from "./obsidian/forget";
 import { runRemoveDevice, runReplaceKey, type KeyActionsHost } from "./obsidian/key-actions";
 import { createKeyActionsUi } from "./obsidian/key-actions-ui";
+import { pseudonymizeNote, pseudonymizeSelection, type NoteHost } from "./obsidian/note-actions";
+import { noteHostPorts } from "./obsidian/note-actions-ui";
 import { runEnterCode, runSetUp, runShowCode, type SetupHost } from "./obsidian/setup";
 import { createSetupUi } from "./obsidian/setup-ui";
 import { createTableStore, type FileProblem, type TableStore } from "./obsidian/table-store";
@@ -249,6 +251,19 @@ export default class PseudonymizerPlugin extends Plugin {
     return { store, memory: this.memory, ownDeviceId: () => this.deviceId, ui: createKeyActionsUi(this.app), changed: () => { this.emitChange(); } };
   }
 
+  /** Die Befehle für Auswahl und Notiz: Schreiben der Tabelle über den Baustein der Gerätedateien (Warteschlange), die Notiz über die Schreib-Ports des Kits. */
+  private noteHost(): NoteHost {
+    return {
+      memory: this.memory,
+      api: this.api,
+      persist: (change) => this.tableStore?.persist(change) ?? Promise.resolve({ error: "not-ready" }),
+      changed: () => { this.emitChange(); },
+      ...noteHostPorts(this.app),
+    };
+  }
+
+  async runPseudonymizeSelection(): Promise<void> { await pseudonymizeSelection(this.noteHost()); }
+  async runPseudonymizeNote(): Promise<void> { await pseudonymizeNote(this.noteHost()); }
   async runForget(): Promise<void> { const h = this.keyActionsHost(); if (h !== null) await runForget(h); }
   async runReplaceKey(): Promise<void> { const h = this.keyActionsHost(); if (h !== null) await runReplaceKey(h); }
   async runRemoveDevice(deviceId: string): Promise<void> { const h = this.keyActionsHost(); if (h !== null) await runRemoveDevice(h, deviceId); }

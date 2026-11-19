@@ -117,6 +117,8 @@ function makeHost(state: PluginState = "ready", over: { copyMode?: "placeholder"
     runShowCode: () => { flows.push("show-code"); return Promise.resolve(); },
     runForget: () => { flows.push("forget"); return Promise.resolve(); },
     runReplaceKey: () => { flows.push("replace-key"); return Promise.resolve(); },
+    runPseudonymizeSelection: () => { flows.push("pseudonymize-selection"); return Promise.resolve(); },
+    runPseudonymizeNote: () => { flows.push("pseudonymize-note"); return Promise.resolve(); },
   };
   const plugin = { addCommand: (c: (typeof added)[number]) => { added.push(c); return c; } };
   return { host, plugin, added, opened, flows, shown: () => shown, changes: () => changes };
@@ -177,14 +179,18 @@ describe("registerCommands", () => {
     expect(opened).toEqual([undefined]);
   });
 
-  it("a command whose function is missing shows the 'not available yet' notice", () => {
-    const { host, plugin, added } = makeHost("ready", { editor: true });
-    registerCommands(plugin, host);
-    for (const id of ["pseudonymize-selection", "pseudonymize-note"]) {
-      Notice.instances.length = 0;
-      added.find((c) => c.id === id)!.checkCallback?.(false);
-      expect(lastNotice(), id).toBe(STRINGS.en["notice.notAvailable"]);
-    }
+  it("pseudonymize-selection and pseudonymize-note run their flows (ready), and are refused with the reason when locked or not set up", () => {
+    const ready = makeHost("ready", { editor: true });
+    registerCommands(ready.plugin, ready.host);
+    Notice.instances.length = 0;
+    for (const id of ["pseudonymize-selection", "pseudonymize-note"]) ready.added.find((c) => c.id === id)!.checkCallback?.(false);
+    expect(ready.flows).toEqual(["pseudonymize-selection", "pseudonymize-note"]);
+    expect(Notice.instances).toHaveLength(0);
+    const locked = makeHost("locked", { editor: true });
+    registerCommands(locked.plugin, locked.host);
+    locked.added.find((c) => c.id === "pseudonymize-note")!.checkCallback?.(false);
+    expect(lastNotice()).toBe(STRINGS.en["notice.locked"]);
+    expect(locked.flows).toEqual([]);
   });
 
   it("set-up, enter-recovery-code and show-recovery-code run their flows, not the 'not available yet' notice", () => {

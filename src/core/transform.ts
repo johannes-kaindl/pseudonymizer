@@ -550,6 +550,18 @@ export function defaultAnswer(c: Candidate, table: PlaceholderTable): Answer {
   return { action: "replace", owner: c.suggestedOwner !== null ? "suggested" : "nobody" };
 }
 
+/** Der Plan für EINE vom Nutzer gewählte Stelle (Befehl „Auswahl pseudonymisieren“, Aufgabe 15): ein Teil `sel` mit dem Wert, ein Kandidat über den ganzen Wert, keine Erkennung. Mit `applyPlan` und einer
+ *  Antwort unter `key` entstehen so dieselben Einträge wie im Prüffenster (neue Person, weiterer Name für einen Eintrag, Besitzer eines Werts, vorhandener Wert behält seinen Platzhalter). */
+export function planSelection(value: string, kind: CandidateKind): { req: TransformRequest; plan: PlanResult; key: string } {
+  const candidate: Candidate = { value, kind, partId: "sel", start: 0, end: value.length, confidence: CONFIDENCE.high, suggestedOwner: null };
+  const edit: PlannedEdit = { partId: "sel", start: 0, end: value.length, value, field: FIELD_OF_KIND[kind], kind, placeholder: null, candidate };
+  return {
+    req: { caller: "pseudonymizer", documentKey: "selection", interactive: true, parts: [{ id: "sel", kind: "line", value }] },
+    plan: { replacements: new Map(), candidates: [candidate], edits: [edit], entities: [] },
+    key: candidateKey(candidate),
+  };
+}
+
 /** Setzt die Antworten um: legt in einer Kopie von `base` die neuen Einträge an (die Kennungen kommen aus `newId`) und baut die Texte. Ein Wert, den `base` inzwischen kennt (ein anderer Weg hat ihn
  *  angelegt), bekommt dessen Platzhalter, keinen zweiten Eintrag. `{ ok: false }`, wenn die Tabelle einen Schritt ablehnt (etwa 99 Werte im Feld, ein vergessener Besitzer): dann ist nichts geändert. */
 export function applyPlan(req: TransformRequest, plan: PlanResult, base: PlaceholderTable, answers: ReadonlyMap<string, Answer>, newId: () => string, lang: "de" | "en" = "de"): Applied {
