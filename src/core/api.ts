@@ -48,7 +48,10 @@ function checkRequest(req: unknown): PseudonymizerApiError | null {
 
 /** Plugin-API v1 als Hülle (Spec 8.7): prüft Eingaben und Zustand, ruft erst dann die Engine. Wirft nie; Fehler sind Werte.
  *  Die Meldungen nennen nie den Text einer gefangenen Ausnahme oder einen Wert der Anfrage, beides könnte Klartext tragen.
- *  `engine` ist eine Funktion, damit `main.ts` die Engine tauschen kann, ohne die API neu zu setzen. */
+ *  `engine` ist eine Funktion, damit `main.ts` die Engine tauschen kann, ohne die API neu zu setzen.
+ *  Grenze (Entscheidung der Planung 2026-11-19, Spec 8.7 unverändert): `restore` setzt auch in Link-Zielen, Bild-URLs und Code zurück; der Aufrufer
+ *  verantwortet, wohin der Text danach geht. Die eigenen Flächen des Plugins (Lesesicht, Live Preview, Kopierwege) sind enger und lassen dort Platzhalter stehen
+ *  (`core/restore-zones.ts`). Ob `restore` einen optionalen Schalter dafür bekommt, ist offen (Task im Cockpit). */
 export function createApi(engine: () => Engine): PseudonymizerApi {
   /** Zustand der Engine; wirft sie, gilt der Zustand als unbekannt (`null`). */
   const stateOf = (): PluginState | null => {
