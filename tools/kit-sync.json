@@ -4,7 +4,7 @@
       "ref": "0.99.1"
     },
     "code-kit": {
-      "ref": "0.78.0"
+      "ref": "0.81.0"
     }
   },
   "targets": [
@@ -14,7 +14,23 @@
       "from": "src/ts/pure",
       "modules": [
         "i18n",
-        "rel-path"
+        "recovery-code",
+        "rel-path",
+        "secrets"
+      ]
+    },
+    {
+      "dir": "src/vendor/kit",
+      "source": "code-kit",
+      "from": "src/ts/web",
+      "modules": [
+        "clipboard"
+      ],
+      "rewrite": [
+        [
+          "../pure/",
+          "./"
+        ]
       ]
     },
     {
@@ -30,12 +46,15 @@
       "source": "obsidian-kit",
       "from": "src/obsidian",
       "modules": [
-        "help-setting",
+        "clipboard",
+        "confirm",
         "folder-suggest",
+        "help-setting",
+        "hub",
+        "prompt-text",
+        "secrets",
         "segmented-control",
         "status-bar-item",
-        "confirm",
-        "hub",
         "status-indicator"
       ],
       "rewrite": [
@@ -45,6 +64,10 @@
         ],
         [
           "../vendor/code-kit/pure/",
+          "../kit/"
+        ],
+        [
+          "../vendor/code-kit/web/",
           "../kit/"
         ]
       ]
