@@ -94,6 +94,15 @@ export function activeNote(app: App): { path: string; name: string } | null {
 }
 
 /** Die Ports für `NoteHost` aus der Obsidian-Schicht (Fenster, Editor, Schreib-Ports des Kits). */
-export function noteHostPorts(app: App): Pick<NoteHost, "ports" | "selection" | "activeNote" | "ui"> {
-  return { ports: () => obsidianWritePorts(app), selection: () => activeSelection(app), activeNote: () => activeNote(app), ui: createNoteUi(app) };
+export function noteHostPorts(app: App): Pick<NoteHost, "ports" | "selection" | "activeNote" | "frontmatter" | "ui"> {
+  return {
+    ports: () => obsidianWritePorts(app),
+    selection: () => activeSelection(app),
+    activeNote: () => activeNote(app),
+    frontmatter: (path) => {
+      const file = app.vault.getFileByPath(path);
+      return file === null ? null : (app.metadataCache.getFileCache(file)?.frontmatter ?? null);
+    },
+    ui: createNoteUi(app),
+  };
 }

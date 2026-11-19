@@ -126,7 +126,7 @@ Jede davon ist bekannt und wird nicht verschwiegen.
 
 - Dateinamen: Ein Platzhalter in einem Dateinamen wird nur mit einem Trennzeichen wiedergefunden; der Rückweg macht aus einem Unterstrich neben einer ersetzten Stelle einen Bindestrich, der hergestellte Name ist also nicht byte-gleich (`Rechnung_max@example.org.pdf` wird zu `Rechnung-max@example.org.pdf`). Die Endung wird nie gelesen. Eine Mail-Adresse mit Bindestrich im lokalen Teil wird in einem Dateinamen ab dem letzten Bindestrich gelesen.
 - „Hier lassen“ hängt am Pfad der Notiz. Wer die Notiz umbenennt, verliert es.
-- Eigenschaften: Verschachtelte Werte, Blockskalare und Fortsetzungszeilen werden nicht gelesen. Datum, Zeit, Wahrheitswerte und `null` gehen nie an das Erkennen.
+- Eigenschaften: Eine Eigenschaft, deren Wert kein einfacher Text und keine flache Liste ist (verschachtelte Werte, Blockskalare, Fortsetzungszeilen, ein Kommentar im Wert), wird **ausgelassen und in der Meldung mit Namen genannt**, nie umgeschrieben; ihre Zeilen bleiben byte-gleich. Das Plugin behandelt eine Eigenschaft nur als einfach, wenn Obsidians eigenes Lesen dasselbe ergibt wie sein Lesen. Datum, Zeit, Wahrheitswerte und `null` gehen nie an das Erkennen.
 - Eine Auswahl, die an ein Wortzeichen grenzt oder schon einen Platzhalter enthält, wird abgelehnt.
 
 **Schlüssel, Geräte und Sync**

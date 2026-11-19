@@ -19,6 +19,7 @@ import type { PersistResult, TableChange } from "./table-store";
  *  Notiz: ein `transform` mit Prüffenster über den Text und alle Text-Eigenschaften, EIN neuer Gesamttext, EIN `swapNote` (nur wenn die Notiz inzwischen unverändert ist; kein Teilerfolg). Keine Schnappschüsse
  *  (Spec 11.1: ein Vorher-Schnappschuss läge im Klartext im Plugin-Ordner); die Umkehr ist Obsidians Rückgängig und der Dateiverlauf, und die Bestätigung sagt das. Eine Notiz mit `mail_id` gehört mailstone und
  *  wird nicht angefasst. GRENZE wie oben: scheitert das Schreiben der Notiz nach dem `transform`, bleiben dessen neue Einträge in der Tabelle.
+ *  Eigenschaften, deren gelesener Wert nicht belegt der ganze Wert ist (verschachtelt, Fortsetzungszeile, Kommentar, Blockskalar; Beleg: Gleichheit mit dem `metadataCache`), werden ausgelassen und mit Namen gemeldet (B1).
  *  Kein Klartext in einer Notice oder `console`: Meldungen nennen höchstens Platzhalter und Zahlen. */
 
 /** Die Auswahl im Editor, wie der Befehl sie festhält, bevor er etwas fragt: Pfad, Spanne (Zeichen im Text des Editors) und der gewählte Text. */
@@ -46,6 +47,8 @@ export interface NoteHost {
   selection(): SelectionInfo | null;
   /** Die aktive Markdown-Notiz; `null` ohne. */
   activeNote(): { path: string; name: string } | null;
+  /** Der Frontmatter-Teil von Obsidians `metadataCache` für die Notiz (`null` ohne Eintrag). Belegt, welche Eigenschaften der Kit-Leser ganz liest (B1). */
+  frontmatter(path: string): Readonly<Record<string, unknown>> | null;
   ui: NoteUi;
   changed(): void;
   /** Zufallsbytes für neue Kennungen; Vorgabe `crypto.getRandomValues`. Nur für Tests austauschbar. */
@@ -56,14 +59,20 @@ const NAME_KINDS: ReadonlySet<CandidateKind> = new Set<CandidateKind>(["person",
 const WORD = /[\p{L}\p{N}_]/u;
 
 type Spot = { from: number; to: number; value: string };
-type SpotCheck = "ok" | "moved" | "boundary";
+type SpotCheck = "ok" | "moved" | "boundary" | "mail";
 
 /** Steht der Wert noch an seiner Stelle, und grenzt er außen an kein Wortzeichen? (Ein Platzhalter, der an Buchstaben klebt, würde vom Rückweg nicht gefunden.) */
 function checkSpot(text: string, spot: Spot): SpotCheck {
+  // Eine Notiz mit `mail_id` gehört mailstone (Spec 8.9): die Nachrichtenzone wäre sonst ein Konflikt für mailstone (K4b).
+  if (splitNote(text, null).mailNote) return "mail";
   if (text.slice(spot.from, spot.to) !== spot.value) return "moved";
   const before = [...text.slice(Math.max(0, spot.from - 2), spot.from)].pop();
   const after = spot.to < text.length ? String.fromCodePoint(text.codePointAt(spot.to) ?? 0) : undefined;
   return (before !== undefined && WORD.test(before)) || (after !== undefined && WORD.test(after)) ? "boundary" : "ok";
+}
+
+function spotNotice(c: Exclude<SpotCheck, "ok">): string {
+  return c === "mail" ? "notice.note.mailstone" : c === "moved" ? "notice.selection.moved" : "notice.selection.boundary";
 }
 
 /** Die Auswahl ohne Leerraum an den Rändern, mit der Spanne des Rests. */
@@ -103,7 +112,7 @@ export async function pseudonymizeSelection(h: NoteHost): Promise<void> {
     const ports = h.ports();
     // Vorab auf demselben Stand prüfen, auf dem `editAtomic` später entscheidet: kein Fragen für eine Auswahl, die nicht ersetzbar ist.
     const pre = checkSpot(await readNoteText(ports, sel.path), spot);
-    if (pre !== "ok") { h.ui.notify(pre === "moved" ? "notice.selection.moved" : "notice.selection.boundary"); return; }
+    if (pre !== "ok") { h.ui.notify(spotNotice(pre)); return; }
 
     const kind = await h.ui.chooseKind();
     if (kind === null) return;
@@ -134,7 +143,7 @@ export async function pseudonymizeSelection(h: NoteHost): Promise<void> {
     });
     if (r.kind === "error") { h.ui.notify("notice.failed"); return; }
     if (r.outcome === "ok") h.ui.notify("notice.selection.done", placeholder);
-    else h.ui.notify(r.outcome === "moved" ? "notice.selection.moved" : "notice.selection.boundary");
+    else h.ui.notify(spotNotice(r.outcome));
   } catch {
     // Der Text einer Ausnahme könnte Klartext tragen: er bleibt weg.
     h.ui.notify("notice.failed");
@@ -150,9 +159,10 @@ export async function pseudonymizeNote(h: NoteHost): Promise<void> {
     const ports = h.ports();
     // Der Stand, gegen den getauscht wird, kommt aus derselben Quelle, über die geschrieben wird (offener Editor zuerst).
     const before = await readNoteText(ports, note.path);
-    const split = splitNote(before);
+    const split = splitNote(before, h.frontmatter(note.path));
+    const skippedNote = (): void => { if (split.skipped.length > 0) h.ui.notify("notice.note.skipped", split.skipped.join(", ")); };
     if (split.mailNote) { h.ui.notify("notice.note.mailstone"); return; }
-    if (split.parts.length === 0) { h.ui.notify("notice.note.empty"); return; }
+    if (split.parts.length === 0) { h.ui.notify("notice.note.empty"); skippedNote(); return; }
 
     const result = await h.api.transform({ caller: PSEUDONYMIZER_PLUGIN_ID, documentKey: note.path, interactive: true, title: note.name, parts: split.parts });
     h.changed();
@@ -169,11 +179,11 @@ export async function pseudonymizeNote(h: NoteHost): Promise<void> {
     }
     const next = rewriteNote(split, result.parts);
     if (!next.ok) { h.ui.notify("notice.note.properties"); return; }
-    if (next.text === split.work) { h.ui.notify("notice.note.none"); return; }
+    if (next.text === split.work) { h.ui.notify("notice.note.none"); skippedNote(); return; }
     const swapped = await swapNote(ports, note.path, before, next.text);
     switch (swapped.kind) {
-      case "swapped": h.ui.notify("notice.note.done", result.applied); break;
-      case "same": h.ui.notify("notice.note.none"); break;
+      case "swapped": h.ui.notify("notice.note.done", result.applied); skippedNote(); break;
+      case "same": h.ui.notify("notice.note.none"); skippedNote(); break;
       case "stale": h.ui.notify("notice.note.stale"); break;
       default: h.ui.notify("notice.note.writeFailed");
     }

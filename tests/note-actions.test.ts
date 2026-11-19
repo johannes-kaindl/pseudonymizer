@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApi } from "../src/core/api";
 import { MemoryTable } from "../src/core/memory-table";
 import { splitNote } from "../src/core/note-parts";
+import { parseFrontmatter } from "../src/vendor/kit/frontmatter";
 import type { PersonOption } from "../src/core/forget-plan";
 import type { CandidateKind } from "../src/core/transform";
 import { PseudonymizerEngine, type ReviewFn } from "../src/obsidian/engine";
@@ -13,6 +14,9 @@ import { placeholderIdFromBytes } from "../src/vendor/kit/placeholder";
 import { tableAddEntry, tableFindValue, type PlaceholderTable } from "../src/vendor/kit/placeholder-table";
 import { pruefeLinearFuzz } from "./vendor/kit/linear-probe";
 import { PERSON, must, sampleTable, withValue } from "./helpers/table-fixtures";
+
+/** Was Obsidians `metadataCache` für einfache Eigenschaften liefert: dieselben Werte wie der Kit-Leser. */
+const flatCache = (text: string): Record<string, unknown> => ({ ...parseFrontmatter(text.replace(/\r\n/g, "\n")).data });
 
 const CONSOLE = ["log", "info", "warn", "error", "debug", "trace"] as const;
 let spies: ReturnType<typeof vi.spyOn>[] = [];
@@ -35,7 +39,7 @@ interface Rig {
   memory: MemoryTable;
   table(): PlaceholderTable;
   transformCalls(): number;
-  state: { selection: SelectionInfo | null; failPersist: boolean; kind: CandidateKind | null; owner: OwnerPick | null; review: ReviewFn; ownerOptions: PersonOption[] | null; beforeOwner: () => void; beforeReview: () => void };
+  state: { selection: SelectionInfo | null; failPersist: boolean; kind: CandidateKind | null; owner: OwnerPick | null; review: ReviewFn; ownerOptions: PersonOption[] | null; cache: Record<string, unknown> | null | undefined; beforeOwner: () => void; beforeReview: () => void };
 }
 
 function rig(note: string, base: PlaceholderTable = sampleTable()): Rig {
@@ -45,7 +49,7 @@ function rig(note: string, base: PlaceholderTable = sampleTable()): Rig {
   const log: string[] = [];
   const notices: Rig["notices"] = [];
   const state: Rig["state"] = {
-    selection: null, failPersist: false, kind: "person", owner: { kind: "new" }, ownerOptions: null,
+    selection: null, failPersist: false, kind: "person", owner: { kind: "new" }, ownerOptions: null, cache: undefined,
     review: () => Promise.resolve({ answers: new Map() }), beforeOwner: () => undefined, beforeReview: () => undefined,
   };
   const ports: WritePorts = {
@@ -85,6 +89,8 @@ function rig(note: string, base: PlaceholderTable = sampleTable()): Rig {
     ports: () => ports,
     selection: () => state.selection,
     activeNote: () => ({ path: PATH, name: "Rückfrage" }),
+    // Ohne Vorgabe liefert der Stellvertreter des Caches die flachen Werte, wie Obsidian sie für einfache Eigenschaften liefert.
+    frontmatter: (p) => (state.cache !== undefined ? state.cache : flatCache(files.get(p) ?? "")),
     ui: {
       chooseKind: () => Promise.resolve(state.kind),
       chooseOwner: (_kind, options) => { state.ownerOptions = [...options]; state.beforeOwner(); return Promise.resolve(state.owner); },
@@ -198,6 +204,28 @@ describe("Auswahl pseudonymisieren", () => {
     expect(keys(r)).toEqual(["notice.selection.empty", "notice.selection.placeholder", "notice.selection.boundary"]);
     expect(asked).not.toHaveBeenCalled();
     expect(r.log).toEqual([]);
+  });
+
+  it("in einer Mail-Notiz (mail_id) wird nichts gefragt und nichts geschrieben; die Notice verweist auf mailstone (K4b)", async () => {
+    const note = "---\nmail_id: abc123\n---\nHallo, Erika Musterfrau schrieb gestern.\n";
+    const r = rig(note);
+    const asked = vi.spyOn(r.host.ui, "chooseKind");
+    r.state.selection = select(note, "Erika Musterfrau");
+    await pseudonymizeSelection(r.host);
+    expect(r.files.get(PATH)).toBe(note);
+    expect(r.log).toEqual([]);
+    expect(asked).not.toHaveBeenCalled();
+    expect(keys(r)).toEqual(["notice.note.mailstone"]);
+  });
+
+  it("wird die Notiz während der Fragen zur Mail-Notiz, bleibt sie unverändert (K4b)", async () => {
+    const r = rig(NOTE);
+    r.state.selection = select(NOTE, "Erika Musterfrau");
+    const mail = `---\nmail_id: abc123\n---\n${NOTE}`;
+    r.state.beforeOwner = () => { r.files.set(PATH, mail); };
+    await pseudonymizeSelection(r.host);
+    expect(r.files.get(PATH)).toBe(mail);
+    expect(keys(r)).toEqual(["notice.note.mailstone"]);
   });
 
   it("ohne Tabelle sagt eine Notice den Grund", async () => {
@@ -340,18 +368,62 @@ describe("Diese Notiz pseudonymisieren", () => {
   });
 });
 
+describe("Diese Notiz pseudonymisieren: Eigenschaften, deren Wert der Kit-Leser nicht ganz liest (Sicherheits-Lesung B1)", () => {
+  const BODY = "Hallo Max Mustermann,\n";
+  // Je Form: die Zeilen, was Obsidians metadataCache dafür liefert (Gleichheit mit dem Kit-Leser fehlt), der Name der Eigenschaft.
+  const FORMS: { name: string; lines: string[]; cache: Record<string, unknown>; key: string }[] = [
+    { name: "Fortsetzungszeile eines Skalars", key: "title", lines: ["title: Max Mustermann", "  und Erika Musterfrau"], cache: { title: "Max Mustermann und Erika Musterfrau" } },
+    { name: "Liste von Abbildungen", key: "people", lines: ["people:", "  - name: Max Mustermann", "    role: Kassenwart", "  - Erika"], cache: { people: [{ name: "Max Mustermann", role: "Kassenwart" }, "Erika"] } },
+    { name: "Liste mit Kommentarzeile und Abbildung", key: "who", lines: ["who:", "  - Max Mustermann", "  # Kommentar", "  - Max Mustermann: Chef"], cache: { who: ["Max Mustermann", { "Max Mustermann": "Chef" }] } },
+    { name: "Kommentar im Wert", key: "author", lines: ["author: Max Mustermann # Chef"], cache: { author: "Max Mustermann" } },
+    { name: "Listeneintrag mit Fortsetzungszeile", key: "cc", lines: ["cc:", "  - Max Mustermann", "    und Erika Musterfrau"], cache: { cc: ["Max Mustermann und Erika Musterfrau"] } },
+  ];
+
+  for (const f of FORMS) {
+    it(`${f.name}: die Eigenschaft bleibt byte-gleich, fremde Zeilen auch, der Rest der Notiz wird pseudonymisiert, die Notice nennt nur den Namen`, async () => {
+      const lines = ["---", ...f.lines, "from: Max Mustermann <max@example.org>", "---"];
+      const note = `${lines.join("\n")}\n${BODY}`;
+      const r = rig(note);
+      r.state.cache = { ...f.cache, from: "Max Mustermann <max@example.org>" };
+      await pseudonymizeNote(r.host);
+      const expected = [...lines.slice(0, -2), `from: ${P} <${P}_Mail>`, "---"].join("\n") + `\nHallo ${P},\n`;
+      expect(r.files.get(PATH)).toBe(expected);
+      expect(keys(r)).toEqual(["notice.note.done", "notice.note.skipped"]);
+      expect(r.notices[1]?.args).toEqual([f.key]);
+      expect(JSON.stringify(r.notices)).not.toContain("Mustermann");
+    });
+  }
+
+  it("fehlt der Cache-Eintrag ganz, gilt keine Eigenschaft als flach: nur der Text wird geschrieben", async () => {
+    const note = `---\nfrom: Max Mustermann <max@example.org>\n---\n${BODY}`;
+    const r = rig(note);
+    r.state.cache = null;
+    await pseudonymizeNote(r.host);
+    expect(r.files.get(PATH)).toBe(`---\nfrom: Max Mustermann <max@example.org>\n---\nHallo ${P},\n`);
+    expect(r.notices[1]).toEqual({ key: "notice.note.skipped", args: ["from"] });
+  });
+
+  it("splitNote sendet eine ausgelassene Eigenschaft nicht an transform", () => {
+    const note = "---\ntitle: Max Mustermann\n  und Erika Musterfrau\nfrom: Erika\n---\nText\n";
+    const s = splitNote(note, { title: "Max Mustermann und Erika Musterfrau", from: "Erika" });
+    expect(s.skipped).toEqual(["title"]);
+    expect(s.parts.map((p) => p.value)).toEqual(["Erika", "Text\n"]);
+  });
+});
+
 describe("splitNote", () => {
   it("sendet Text-Eigenschaften und Listeneinträge als line, den Rest als text; Datum, Wahrheitswert und Leeres nicht", () => {
-    const s = splitNote("---\na: Hallo\nd: 2026-11-19\nt: 10:30\nb: true\ne:\nl: [x, y]\n---\nText\n");
+    const text = "---\na: Hallo\nd: 2026-11-19\nt: 10:30\nb: true\ne:\nl: [x, y]\n---\nText\n";
+    const s = splitNote(text, flatCache(text));
     expect(s.parts.map((p) => [p.kind, p.value])).toEqual([["line", "Hallo"], ["line", "x"], ["line", "y"], ["text", "Text\n"]]);
   });
   it("ein BOM vor dem Zaun heißt: kein Frontmatter, die ganze Notiz ist Text", () => {
-    const s = splitNote("﻿---\na: Hallo\n---\nText\n");
+    const s = splitNote("﻿---\na: Hallo\n---\nText\n", null);
     expect(s.hasFrontmatter).toBe(false);
     expect(s.parts).toHaveLength(1);
   });
   it("bleibt linear in der Länge eines Werts und eines Schlüssels", { timeout: 180_000 }, () => {
-    const r = pruefeLinearFuzz((s) => splitNote(`---\n${s}: ${s}\n---\n${s}\n`), { alphabet: ["a", "2026-11-19", ":", "T"], maxLaenge: 2, verschachtelt: false });
+    const r = pruefeLinearFuzz((s) => { const t = `---\n${s}: ${s}\n---\n${s}\n`; return splitNote(t, flatCache(t)); }, { alphabet: ["a", "2026-11-19", ":", "T"], maxLaenge: 2, verschachtelt: false });
     expect(r.verdaechtig, JSON.stringify(r.verdaechtig)).toEqual([]);
   });
 });

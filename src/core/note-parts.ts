@@ -2,8 +2,10 @@
 // Rein: kein `obsidian`-Import, kein Schreiben. Das Schreiben (ein `swapNote`) macht `src/obsidian/note-actions.ts`.
 //
 // Zerlegung: der Text hinter dem Frontmatter-Block ist ein Teil (`kind: "text"`, Id `text`); jede Text-Eigenschaft ist ein Teil (`kind: "line"`), eine Liste ein Teil je Eintrag.
-// Gelesen wird mit dem Kit-Leser `parseFrontmatter` (flache Skalare und einfache Listen); verschachtelte Werte, Blockskalare und Fortsetzungszeilen sieht er nicht und das Plugin deshalb auch nicht
-// (benannte Grenze, README). Nicht gesendet werden Werte, die ein YAML-Leser nicht als Text liest (Datum, Uhrzeit, Wahrheitswert, `null`) und leere Werte.
+// Gelesen wird mit dem Kit-Leser `parseFrontmatter` (flache Skalare und einfache Listen); verschachtelte Werte, Blockskalare, Fortsetzungszeilen und Kommentare im Wert liest er nur teilweise, `patchFrontmatter`
+// beim Schreiben aber ganz (es ersetzte den ganzen Wert und löschte die ungelesenen Zeilen: Sicherheits-Lesung Runde 1, B1). Darum gilt je Eigenschaft: der gelesene Wert muss der ganze Wert sein, belegt durch
+// Gleichheit mit dem Wert, den Obsidians `metadataCache` für dieselbe Eigenschaft liefert (Skalar oder flache Textliste; alles andere, auch ein fehlender Cache-Eintrag, heißt „nicht flach“). Eine solche
+// Eigenschaft wird ausgelassen (nicht an `transform` gesendet, nicht gepatcht) und in `skipped` gemeldet (nur der Name, nie der Wert). Nicht gesendet werden Werte, die ein YAML-Leser nicht als Text liest (Datum, Uhrzeit, Wahrheitswert, `null`) und leere Werte.
 //
 // Zusammensetzen: nur Eigenschaften, deren Wert sich geändert hat, gehen durch `patchFrontmatter` (zeilenweise, fremde Zeilen byte-gleich, geschrieben über `serializeFrontmatter`, das einen Wert nur
 // quotet, wenn YAML es verlangt: `Person_k3x9m2ab7q <Person_k3x9m2ab7q_Mail>` bleibt ungequotet, gemessen in Etappe 0 (b), 2026-11-19). Eine Eigenschaft wie `up: "[[Max Mustermann]]"` bleibt, weil `transform`
@@ -31,6 +33,8 @@ export interface NoteSplit {
   mailNote: boolean;
   parts: TransformPart[];
   targets: ReadonlyMap<string, PartTarget>;
+  /** Namen der Eigenschaften, die ausgelassen wurden, weil der gelesene Wert nicht der ganze Wert ist (B1). Nie ein Wert. */
+  skipped: string[];
   /** Eigenschaften mit ihrem gelesenen Wert; Listen, die als Blockliste geschrieben stehen, in `blockLists`. */
   data: Readonly<Record<string, FmValue>>;
   blockLists: ReadonlySet<string>;
@@ -45,9 +49,17 @@ function plain(text: string): string {
   return (text.startsWith(BOM) ? text.slice(1) : text).replace(/\r\n/g, "\n");
 }
 
+/** Der Wert des Kit-Lesers ist der ganze Wert, wenn der Cache von Obsidian dasselbe liefert: gleicher Text oder gleiche flache Liste von Texten. Alles andere (anderer Wert, anderer Typ, fehlt) ist „nicht flach“. */
+function isWholeValue(read: FmValue, cached: unknown): boolean {
+  if (typeof read === "string") return typeof cached === "string" && cached === read;
+  if (Array.isArray(read)) return Array.isArray(cached) && cached.length === read.length && read.every((x, i) => typeof cached[i] === "string" && cached[i] === x);
+  return false;
+}
+
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export function splitNote(text: string): NoteSplit {
+/** `cache` ist der Frontmatter-Teil von Obsidians `metadataCache` der Notiz (`undefined`/`null` ohne Eintrag: dann ist keine Eigenschaft belegt flach). */
+export function splitNote(text: string, cache: Readonly<Record<string, unknown>> | null | undefined): NoteSplit {
   const work = plain(text);
   const span = text.startsWith(BOM) ? null : locateFrontmatter(work);
   const fm = span === null ? { data: {} as Record<string, FmValue>, order: [] as string[] } : parseFrontmatter(work);
@@ -55,9 +67,14 @@ export function splitNote(text: string): NoteSplit {
   const parts: TransformPart[] = [];
   const targets = new Map<string, PartTarget>();
   const blockLists = new Set<string>();
+  const skipped: string[] = [];
   fm.order.forEach((key, i) => {
     const v = fm.data[key];
     if (v === undefined) return;
+    const sendable = Array.isArray(v) ? v.some(isText) : typeof v === "string" && isText(v);
+    if (!sendable) return;
+    const cached = cache !== null && cache !== undefined && Object.hasOwn(cache, key) ? cache[key] : undefined;
+    if (!isWholeValue(v, cached)) { skipped.push(key); return; }
     if (Array.isArray(v)) {
       if (span !== null && new RegExp(`^${escapeRegExp(key)}:[ \\t]*$`, "m").test(span.raw)) blockLists.add(key);
       v.forEach((item, n) => {
@@ -76,7 +93,7 @@ export function splitNote(text: string): NoteSplit {
     parts.push({ id: "text", kind: "text", value: body });
     targets.set("text", { kind: "text" });
   }
-  return { work, hasFrontmatter: span !== null, body, mailNote: span !== null && "mail_id" in fm.data, parts, targets, data: fm.data, blockLists };
+  return { work, hasFrontmatter: span !== null, body, mailNote: span !== null && "mail_id" in fm.data, parts, targets, skipped, data: fm.data, blockLists };
 }
 
 export type Rewritten = { ok: true; text: string } | { ok: false };

@@ -126,7 +126,7 @@ Each of these is known and not hidden.
 
 - File names: placeholders in a file name can be found again only with a delimiter; the way back turns an underscore next to a replaced place into a hyphen, so the restored name is not byte-identical (`Rechnung_max@example.org.pdf` becomes `Rechnung-max@example.org.pdf`). The extension is never read. A mail address with a hyphen in its local part is read from the last hyphen on in a file name.
 - "Keep here" hangs on the note path. Renaming the note loses it.
-- Properties: nested values, block scalars and continuation lines are not read. Dates, times, booleans and `null` never go to the finding.
+- Properties: a property whose value is not plain text or a flat list (nested values, block scalars, continuation lines, a comment in the value) is **left out and reported by name** in the notice, never rewritten; its lines stay byte-equal. The plugin only treats a property as plain when Obsidian's own reading of it equals what the plugin read. Dates, times, booleans and `null` never go to the finding.
 - A selection that touches a word character or already contains a placeholder is refused.
 
 **Keys, devices and sync**
