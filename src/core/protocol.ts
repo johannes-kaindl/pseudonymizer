@@ -52,8 +52,11 @@ export function forgetProgress(devices: DeviceView[], currentStand: number, code
 
 /** Spec 8.3 Regel 2: Darf das Gerät seine Fassung unter `stand` schreiben, ohne vorher vorzudrehen? Nein, sobald es unter diesem Stand
  *  schon eine Fassung geschrieben hat, die eine ID trug, die jetzt eine Vergessen-Marke hat. */
+/** Was dieses Gerät zuletzt geschrieben hat: unter welchem Stand und mit welchen Eintrags-IDs. */
+export interface WrittenAtStand { stand: number; ids: ReadonlySet<string> }
+
 export function mustAdvanceBeforeWrite(
-  writtenAtStand: { stand: number; ids: ReadonlySet<string> } | null,
+  writtenAtStand: WrittenAtStand | null,
   stand: number,
   forgottenIds: ReadonlySet<string>,
 ): boolean {
@@ -63,7 +66,10 @@ export function mustAdvanceBeforeWrite(
 }
 
 /** Stand des gesicherten Codes: höchster `codeShownAtStand` unter den geöffneten Fassungen der aktuellen Kette, null wenn keiner. */
-export function codeStandOf(payloads: { chainId: string; codeShownAtStand: number | null }[], chainId: string): number | null {
+/** Aus einer geöffneten Gerätedatei: Kette und Stand, bei dem dort zuletzt ein Code gesichert wurde. */
+export interface PayloadCodeStand { chainId: string; codeShownAtStand: number | null }
+
+export function codeStandOf(payloads: readonly PayloadCodeStand[], chainId: string): number | null {
   let best: number | null = null;
   for (const p of payloads) {
     if (p.chainId !== chainId || p.codeShownAtStand === null) continue;
