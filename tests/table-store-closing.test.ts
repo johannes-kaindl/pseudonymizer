@@ -257,4 +257,82 @@ describe("Abschlussdatei: andere Geräte sperren sich (Spec 8.3)", () => {
     expect(a.memory.state()).toBe("ready");
     expect(a.store.problems()).toEqual([]);
   });
+
+  // ── Absturz zwischen Abschlussdatei und neuer Fassung: das ersetzende Gerät heilt sich selbst ──
+
+  /** a ersetzt den Schlüssel; zwischen Abschlussdatei und neuer Fassung stürzt es ab (die neue Fassung scheitert, auch das Zurücknehmen der Abschlussdatei kommt nicht mehr an). Danach startet a frisch mit demselben Schlüsselbund. */
+  async function crashedReplace(): Promise<{ fs: FakeFs; a: Device; b: Device; restarted: Device; oldOwn: Uint8Array | undefined }> {
+    const fs = new FakeFs(FOLDER);
+    const a = await readyDevice(fs, "dev-a", twoPersons());
+    const b = await readyDevice(fs, "dev-b", twoPersons());
+    const oldOwn = fs.get(`dev-a${EXT}`);
+    const removeOrig = fs.adapter.remove;
+    fs.beforeWrite = (p) => (p.includes(`/dev-a${EXT}`) ? Promise.reject(new Error("Absturz")) : Promise.resolve());
+    fs.adapter.remove = () => Promise.reject(new Error("Absturz"));
+    expect(await a.store.replaceKey(newContent())).toEqual({ ok: false, reason: "storage-failed" });
+    fs.beforeWrite = null;
+    fs.adapter.remove = removeOrig;
+    expect(fs.names()).toContain(CLOSING_FILE); // die Lücke: Abschlussdatei da, neue Fassung nicht
+    expect(fs.get(`dev-a${EXT}`)).toEqual(oldOwn);
+    const restarted = makeDevice(fs, { deviceId: "dev-a", content: null, name: "dev-a", secrets: a.secrets });
+    return { fs, a, b, restarted, oldOwn };
+  }
+
+  it("(g) a startet nach dem Abbruch frisch: bereit, die eigene Abschlussdatei ist weg, die Tabelle von a ist unverändert lesbar, der Schlüssel bleibt der alte", async () => {
+    const { fs, restarted, oldOwn } = await crashedReplace();
+    const keyBefore = restarted.secrets.raw(KEY_SECRET_ID);
+    await restarted.store.refresh();
+    expect(restarted.memory.state()).toBe("ready");
+    expect(restarted.memory.reason()).toBeNull();
+    expect(fs.names()).not.toContain(CLOSING_FILE);
+    expect(fs.get(`dev-a${EXT}`)).toEqual(oldOwn);
+    expect(nameOf(restarted.memory.table(), ID_A)).toBe(MAX);
+    expect(nameOf(restarted.memory.table(), ID_B)).toBe(BERTA);
+    expect(restarted.secrets.raw(KEY_SECRET_ID)).toBe(keyBefore);
+    expect(restarted.store.problems()).toEqual([]);
+  });
+
+  it("(g) b war in der Lücke gesperrt (key-replaced); nach der Heilung von a und dem nächsten Auffrischen ist b bereit", async () => {
+    const { b, restarted } = await crashedReplace();
+    await b.store.refresh();
+    expect(b.memory.state()).toBe("locked");
+    expect(b.memory.reason()).toBe("key-replaced");
+    await restarted.store.refresh();
+    expect(restarted.memory.state()).toBe("ready");
+    await b.store.refresh();
+    expect(b.memory.state()).toBe("ready");
+    expect(nameOf(b.memory.table(), ID_A)).toBe(MAX);
+  });
+
+  it("(g) nach der Heilung kann a den Schlüssel erneut ersetzen", async () => {
+    const { fs, restarted } = await crashedReplace();
+    await restarted.store.refresh();
+    expect(await restarted.store.replaceKey(newContent())).toEqual({ ok: true });
+    expect(fs.names()).toContain(CLOSING_FILE);
+    expect(Array.from(storedKey(restarted).chainId)).toEqual(Array.from(NEW_CHAIN.chainId));
+  });
+
+  it("(g) Gegenprobe: die Abschlussdatei eines anderen Geräts sperrt a weiterhin, auch wenn a eine eigene daneben hat", async () => {
+    const fs = new FakeFs(FOLDER);
+    const a = await readyDevice(fs, "dev-a", twoPersons());
+    const b = await readyDevice(fs, "dev-b", twoPersons());
+    expect(await b.store.replaceKey(newContent())).toEqual({ ok: true });
+    expect(fs.names()).toContain(closingDeviceId("dev-b", hex(CHAIN.chainId)) + EXT);
+    await a.store.refresh();
+    expect(a.memory.state()).toBe("locked");
+    expect(a.memory.reason()).toBe("key-replaced");
+    expect(fs.names()).toContain(closingDeviceId("dev-b", hex(CHAIN.chainId)) + EXT);
+  });
+
+  it("(g) Gegenprobe: liegt eine eigene Datei der neuen Kette da (Schlüssel nicht ablegbar), bleibt a gesperrt und die Abschlussdatei liegen", async () => {
+    const fs = new FakeFs(FOLDER);
+    const a = makeDevice(fs, { deviceId: "dev-a", content: await contentAt(CHAIN, 0), name: "dev-a", keyWriteFails: true });
+    await seedFile(fs, { deviceId: "dev-a", stand: 0, table: twoPersons() });
+    await a.store.refresh();
+    expect(await a.store.replaceKey(newContent())).toEqual({ ok: false, reason: "key-write-failed" });
+    await a.store.refresh();
+    expect(a.memory.state()).toBe("locked");
+    expect(a.memory.reason()).toBe("key-replaced");
+    expect(fs.names()).toContain(CLOSING_FILE);
+  });
 });

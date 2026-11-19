@@ -24,6 +24,8 @@
 //    (`closed-<Gerät>-<Kette>`, Inhalt nur „ersetzt“, `core/payload.ts`). Ein Gerät, das sie mit seinem Schlüssel öffnet, sperrt sich (`key-replaced`) und schreibt nichts mehr. Die Abschlussdatei kommt
 //    vor der neuen Fassung, weil ein Erfolg kein Gerät ungesperrt lassen darf; scheitert danach die neue Fassung, nimmt das Gerät sie zurück, damit kein Abbruch ein Gerät grundlos sperrt.
 //    Sie ist kein Gerät (Geräteliste, Befunde, „Gerät entfernen“). Das ersetzende Gerät räumt sie weg, sobald keine andere Datei der alten Kette mehr im Ordner liegt.
+//    Stürzt es zwischen Abschlussdatei und neuer Fassung ab, heilt es sich selbst: findet es beim Auffrischen nur seine EIGENE Abschlussdatei, hält der Schlüsselbund noch die alte Kette und liegt keine eigene Datei
+//    einer neuen Kette im Ordner, löscht es die Abschlussdatei und bleibt bereit (die anderen entsperren beim nächsten Auffrischen). Eine fremde Abschlussdatei sperrt weiter.
 // 9. **Der alte Kettenzustand wird geleert** (`wipe`), sobald der neue im Schlüsselbund steht. Jeder Zustand, den ein Lauf ableitet, wird am Ende des Laufs geleert, auch bei einem Fehler.
 //
 // Kein Klartext in Meldungen: `FileProblem` trägt Art, Geräte-ID und Dateipfad (der Name der Datei ist die Geräte-ID), nie Inhalt, Namen oder Schlüsselmaterial.
@@ -306,7 +308,7 @@ export function createTableStore(o: TableStoreOptions): TableStore {
     // 3 und 4. Mit einem Schlüssel: jeden Kopf gegen ihn einordnen (Sprungdeckel), die Schlüssel der Stände nur im Arbeitsspeicher ableiten und öffnen.
     // Aus dem Schlüsselbund gelesene Bytes gehören diesem Lauf und werden mit ihm geleert; ein eingegebener Code gehört dem Aufrufer, dort arbeitet der Lauf auf einer Kopie.
     // Älter oder fremde Kette: nicht geöffnet, kein Befund (das Gerät dort hat noch nicht nachgezogen, oder die Kette wurde ersetzt). Zu weit voraus: beschädigt.
-    const openWith = async (c: RecoveryCodeContent, borrowed: boolean, sink: FileProblem[]): Promise<{ opened: Opened[]; closings: number; states: Map<number, ChainState>; chainId: string; stand: number }> => {
+    const openWith = async (c: RecoveryCodeContent, borrowed: boolean, sink: FileProblem[]): Promise<{ opened: Opened[]; closings: number; ownClosings: string[]; states: Map<number, ChainState>; chainId: string; stand: number }> => {
       const baseState: ChainState = borrowed
         ? { chainId: Uint8Array.from(c.chainId), stand: c.stand, chainKey: Uint8Array.from(c.key) }
         : { chainId: c.chainId, stand: c.stand, chainKey: c.key };
@@ -354,6 +356,7 @@ export function createTableStore(o: TableStoreOptions): TableStore {
       }
       // Abschlussdateien der eigenen Kette: nur eine, die sich mit dem Schlüssel öffnen lässt und die Markierung trägt, zählt. Ältere und fremde sind still (eine ältere ist nicht mehr zu öffnen).
       let closings = 0;
+      const ownClosings: string[] = [];
       for (const h of closingHeads) {
         const cl = classifyFile(mine, h.head, ratchet.maxJump);
         if (cl === "behind" || cl === "foreign-chain") continue;
@@ -366,8 +369,9 @@ export function createTableStore(o: TableStoreOptions): TableStore {
         const c = decodeClosing(r.plaintext);
         if ("error" in c) { bad(c.error === "version" ? "newer-format" : "bad-content"); continue; }
         closings++;
+        if (h.head.deviceId !== null && h.head.deviceId === closingDeviceId(ownId, h.head.chainId)) ownClosings.push(h.head.deviceId);
       }
-      return { opened: got, closings, states, chainId: mine.chainId, stand: mine.stand };
+      return { opened: got, closings, ownClosings, states, chainId: mine.chainId, stand: mine.stand };
     };
     const main = await openWith(content, adoptRun !== null, problems);
     const { opened, states } = main;
@@ -375,7 +379,15 @@ export function createTableStore(o: TableStoreOptions): TableStore {
 
     // 4b. Eine Abschlussdatei der eigenen Kette, mit dem eigenen Schlüssel gelesen: ein anderes Gerät hat den Schlüssel ersetzt. Gesperrt, nichts geschrieben, auch wenn die eigene alte Datei
     // noch lesbar ist. Der Ausweg ist der neue Code (`adopt`, der die alte Fassung mit dem alten Schlüssel übernimmt). Ein eingegebener Code liest die alte Kette nicht, also gilt das dort nicht.
-    if (adoptRun === null && main.closings > 0) {
+    // Ausnahme, das ersetzende Gerät heilt sich selbst: Liegt nur die EIGENE Abschlussdatei da (Geräte-ID im Namen), trägt der Schlüsselbund noch die alte Kette und liegt keine eigene Datei einer anderen
+    // Kette im Ordner, ist das Ersetzen zwischen Abschlussdatei und neuer Fassung abgebrochen (Absturz, Neustart): die Datei geht weg, das Gerät bleibt bereit, die anderen entsperren beim nächsten
+    // Auffrischen. Scheitert das Löschen, bleibt das Gerät trotzdem bereit; der nächste Lauf holt es nach. Eine fremde Abschlussdatei sperrt weiter, auch neben einer eigenen.
+    let closings = main.closings;
+    if (adoptRun === null && closings > 0 && main.ownClosings.length === closings && !heads.some((h) => h.head.deviceId === ownId && h.head.chainId !== own.chainId)) {
+      for (const id of main.ownClosings) await files.removeForeign(id);
+      closings = 0;
+    }
+    if (adoptRun === null && closings > 0) {
       const st = deriveStatus({
         deviceFiles: deviceEntries.length, readableHeads: heads.length, hasKey: true, keyCorrupt: false,
         openedFiles: opened.length, ownChainMatches: true, storageError: false, chainReplaced: true,
