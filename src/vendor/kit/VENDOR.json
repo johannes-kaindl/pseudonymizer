@@ -2,6 +2,6 @@
   "source": "code-kit",
   "version": "0.78.0",
   "sha": "84820b7",
-  "vendored": "i18n.ts",
+  "vendored": "i18n.ts, rel-path.ts",
   "license": "AGPL-3.0-or-later"
 }

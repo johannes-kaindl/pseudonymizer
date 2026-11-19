@@ -1,0 +1,7 @@
+{
+  "source": "obsidian-kit",
+  "version": "0.99.1",
+  "sha": "d5efe78",
+  "vendored": "help-setting.ts, folder-suggest.ts, segmented-control.ts, status-bar-item.ts, confirm.ts",
+  "license": "AGPL-3.0-or-later"
+}

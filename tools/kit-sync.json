@@ -13,7 +13,30 @@
       "source": "code-kit",
       "from": "src/ts/pure",
       "modules": [
-        "i18n"
+        "i18n",
+        "rel-path"
+      ]
+    },
+    {
+      "dir": "src/vendor/kit-obsidian",
+      "source": "obsidian-kit",
+      "from": "src/obsidian",
+      "modules": [
+        "help-setting",
+        "folder-suggest",
+        "segmented-control",
+        "status-bar-item",
+        "confirm"
+      ],
+      "rewrite": [
+        [
+          "../pure/",
+          "../kit/"
+        ],
+        [
+          "../vendor/code-kit/pure/",
+          "../kit/"
+        ]
       ]
     },
     {
@@ -21,7 +44,8 @@
       "source": "obsidian-kit",
       "from": "src/testing",
       "modules": [
-        "obsidian-mock"
+        "obsidian-mock",
+        "kit-css"
       ]
     }
   ]

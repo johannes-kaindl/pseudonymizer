@@ -4,7 +4,7 @@ Orientierung für KI-Agenten (Claude Code, Codex, …) und Mitwirkende an diesem
 
 **Profil:** `ts-node` · `obsidian-plugin`.
 
-**Stand 2026-11-19:** Gerüst nach Dach-Standard steht (Aufgabe 1 des Bauplans), Einstellungen, Gerätezustand und Texte folgen (Aufgabe 2). Die Design-Spec für Version 1 ist von Johannes am 2026-11-18 freigegeben und liegt im Coding-Cockpit (`25_Coding/pseudonymizer/`, Note „2026-11-18-pseudonymizer-design“ unter _SDD); der Bauplan „2026-11-18-pseudonymizer-plan-1“ liegt daneben. Die Kit-Bausteine sind beim Kit-Master bestellt (Tasks in den Cockpits code-kit und obsidian-kit). Kein Tag und kein Release, bevor das Sicherheits-Review der Kryptografie-Bausteine durch ist.
+**Stand 2026-11-19:** Gerüst nach Dach-Standard (Aufgabe 1) und Einstellungen, Gerätezustand und Texte (Aufgabe 2) stehen; weiter mit Aufgabe 3 des Bauplans. Die Design-Spec für Version 1 ist von Johannes am 2026-11-18 freigegeben und liegt im Coding-Cockpit (`25_Coding/pseudonymizer/`, Note „2026-11-18-pseudonymizer-design“ unter _SDD); der Bauplan „2026-11-18-pseudonymizer-plan-1“ liegt daneben. Die Kit-Bausteine sind beim Kit-Master bestellt (Tasks in den Cockpits code-kit und obsidian-kit). Kein Tag und kein Release, bevor das Sicherheits-Review der Kryptografie-Bausteine durch ist.
 
 ## Project character
 
@@ -17,7 +17,11 @@ Orientierung für KI-Agenten (Claude Code, Codex, …) und Mitwirkende an diesem
 **Kit-first, Vendoring statt Dependency.** Geteilte Bausteine liegen als Snapshot unter `src/vendor/kit/` (pure), `src/vendor/kit-obsidian/` und `tests/vendor/kit/`, je mit Herkunfts-Header und `VENDOR.json`. Nie von Hand editieren; Re-Vendoring über `node ../tools/kit-sync/kit-sync.mjs` (Pins in `tools/kit-sync.json`, Tags obsidian-kit 0.99.1 und code-kit 0.78.0). Kryptografie nur über die Kit-Bausteine, kein `node:crypto`, kein eigenes Verfahren.
 
 ```
-src/main.ts                 onload: Sprache, Strings (wächst mit den Aufgaben)
+src/main.ts                 onload: Sprache, Einstellungen, Gerätezustand, Einstellungsseite (wächst mit den Aufgaben)
+src/core/constants.ts       Präfix der geräteeigenen Schlüssel
+src/core/settings.ts        PseudonymizerSettings, loadSettings (Feldreparatur), withFolder (Ordnerregel)
+src/obsidian/device.ts      geräteeigene Werte im lokalen Speicher (Klartext zeigen, Gerätename)
+src/obsidian/settings-tab.ts  deklarativer Tab, Hilfe-Zeile zuerst
 src/core/                   reiner Kern (Einstellungen, Zustand, Protokoll, Inhalt der Gerätedatei, API-Hülle)
 src/obsidian/               Obsidian-Schicht (Gerätezustand, Einstellungsseite, Befehle, Ansicht)
 src/i18n/strings.ts         alle Nutzertexte, EN kanonisch, DE vollständig
@@ -49,6 +53,7 @@ tools/kit-sync.json         Pins und Module; `tools/sync-kit.sh` ist der Wrapper
 ## Gotchas
 
 - **Obsidians `saveLocalStorage(key, false)` speichert nichts** (gemessen in filename-sanitizer 1.15.1): Ein Gerätewert, der aus sein kann, wird als Text gespeichert (`on`/`off`), nie als Boolean.
+- **Der Ordner der Tabelle darf kein Segment mit Punkt am Anfang tragen** (`withFolder`): Obsidian führt versteckte Ordner nicht im Vault-Index, und die Lint-Regel `hardcoded-config-path` verbietet den Namen des Konfigurationsordners im Quelltext.
 - **Der Rückweg setzt nie in Attribute (`href`, `src`, `title`, `alt`, `data-*`) und nie in Code ein** (Spec 2, 8.6).
 - **Kein Tag und kein Release** vor dem Sicherheits-Review der Kryptografie-Bausteine (Spec 11.3); die Release-Dateien liegen nur, weil die Vorlage sie verlangt.
 - **`grep` ist auf diesem Rechner ugrep und respektiert `.gitignore`;** über Repos hinweg `/usr/bin/grep`.
