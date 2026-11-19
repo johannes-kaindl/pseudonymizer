@@ -2,11 +2,12 @@ import { editorLivePreviewField, MarkdownView } from "obsidian";
 import type { App, Plugin } from "obsidian";
 import type { EditorState, Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { restoreZones, type RestoreZones } from "../core/restore-zones";
 import type { CopyMode } from "../core/settings";
 import { listAllFences } from "../vendor/kit/fences";
 import { findPlaceholders } from "../vendor/kit/placeholder";
 import type { TextSwapOptions } from "../vendor/kit-obsidian/text-swap";
-import { inlineCodeRanges, textSwapEditorExtension, textSwapEditorRefresh } from "../vendor/kit-obsidian/text-swap-editor";
+import { textSwapEditorExtension, textSwapEditorRefresh } from "../vendor/kit-obsidian/text-swap-editor";
 import { copyFassung } from "./copy";
 import type { ReadingHandle } from "./reading";
 
@@ -54,21 +55,32 @@ export function isLivePreview(state: EditorState): boolean {
   return state.field(editorLivePreviewField, false) === true;
 }
 
-/** Was der Editor in `range` zeigen würde, wenn nichts ausgewählt wäre, als Text: jede bekannte Fundstelle durch ihren Klartext ersetzt, außer in Inline-Code und in Codeblöcken (dort bleibt der
- *  Platzhalter, wie im Bild); vergessene, nicht lesbare und unbekannte bleiben, wie sie standen. Rein bis auf den Aufruf der Auflösung. `count` ist die Zahl der Ersetzungen. */
+/** Die Bereiche, in denen Klartext eingesetzt werden darf, je Dokumentstand (wie `fenceCache`): Kopieren ist selten, aber der Bereich über das ganze Dokument erkennt ein Code-Stück, das vor der Auswahl beginnt. */
+const zonesCache = new WeakMap<object, RestoreZones>();
+
+function zonesOf(state: EditorState): RestoreZones {
+  const hit = zonesCache.get(state.doc);
+  if (hit !== undefined) return hit;
+  const zones = restoreZones(state.doc.toString());
+  zonesCache.set(state.doc, zones);
+  return zones;
+}
+
+/** Was der Editor in `range` zeigen würde, wenn nichts ausgewählt wäre, als Text: jede bekannte Fundstelle durch ihren Klartext ersetzt, aber nur dort, wo `transform` ersetzen würde (`restoreZones`, W1): in
+ *  Code, Link-Zielen, Bild-URLs, nackten URLs, Kommentaren, Mathe und Wikilinks bleibt der Platzhalter; vergessene, nicht lesbare und unbekannte bleiben, wie sie standen. Rein bis auf den Aufruf der Auflösung. `count` ist die Zahl der Ersetzungen. */
 export function plainRangeText(
   state: EditorState,
   range: Span,
   o: Pick<TextSwapOptions, "resolve" | "onError">,
 ): { text: string; count: number } {
   const doc = state.doc;
-  // Die Zeilen der Auswahl tragen den Zusammenhang für Inline-Code (ein Backtick vor der Auswahl öffnet es); ein Stück, das über diese Zeilen hinausläuft, sieht der Baustein auch in der Anzeige nur je Absatz.
+  // Die Zeilen der Auswahl tragen die Fundstellen (nur eine ganz in der Auswahl liegende zählt); ob eine Stelle ersetzbar ist, entscheidet der Bereich über das ganze Dokument.
   const ctxFrom = doc.lineAt(range.from).from;
   const ctxTo = doc.lineAt(range.to).to;
   const ctx = doc.sliceString(ctxFrom, ctxTo);
   const text = doc.sliceString(range.from, range.to);
   if (!text.includes("_")) return { text, count: 0 };
-  const code = inlineCodeRanges(ctx);
+  const zones = zonesOf(state);
   let out = "";
   let at = 0;
   let count = 0;
@@ -76,8 +88,7 @@ export function plainRangeText(
     const from = ctxFrom + ph.start;
     const to = ctxFrom + ph.end;
     if (from < range.from || to > range.to) continue;
-    if (code.some((c) => ph.start >= c.from && ph.start < c.to)) continue;
-    if (inFence(state, from, to)) continue;
+    if (!zones.inside(from, to)) continue;
     let res;
     try { res = o.resolve(ph); } catch (e) { o.onError?.(e); continue; }
     if (res === undefined || res.status !== "known") continue;

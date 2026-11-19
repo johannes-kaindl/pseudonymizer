@@ -243,6 +243,29 @@ describe("Befehle „Mit Klartext kopieren“ und „Mit Platzhaltern kopieren�
     expect(written).toEqual([{ text: `Hallo ${NAME}`, message: "Copied with plain text (0 replaced). 1 forgotten stay as placeholders." }]);
   });
 
+  it("Platzhalter in Adressen und Code bleiben beim Kopieren Platzhalter; Fließtext und mailto: werden aufgelöst; die Notice zählt die stehengebliebenen, ohne Klartext (W1)", async () => {
+    const text = [
+      `Hallo ${NAME}, [Mail](mailto:${MAIL}).`,
+      `![x](https://evil.example/p?n=${NAME})`,
+      `[l](https://evil.example/${NAME})`,
+      `<img src="https://evil.example/${NAME}.png">`,
+      `https://evil.example/u/${NAME}`,
+      `\`${NAME}\``,
+      "```",
+      NAME,
+      "```",
+    ].join("\n");
+    const { u, written } = ui(text);
+    await copyCommand(hostFor(memoryWith()), "plaintext", u);
+    expect(written).toHaveLength(1);
+    const out = written[0]?.text ?? "";
+    expect(out).toContain("Hallo Max Mustermann, [Mail](mailto:max@example.org).");
+    expect(out.replace("Hallo Max Mustermann, [Mail](mailto:max@example.org).", "")).not.toMatch(/Mustermann/);
+    expect(out.match(new RegExp(NAME, "g"))).toHaveLength(6);
+    expect(lastNotice()).toBe("6 placeholder(s) in addresses or code stayed as placeholders.");
+    expect(lastNotice()).not.toMatch(/Mustermann|max@example/);
+  });
+
   it("gesperrt oder nicht eingerichtet: nichts wird kopiert, die Notice nennt den Grund", async () => {
     const locked = memoryWith();
     locked.lock("table-missing");

@@ -48,6 +48,19 @@ const entryButton = (parent: El, text: string, nth = 0): El => {
   return b;
 };
 
+describe("Reiter Personen: Klartext nie in einem Attribut (K1)", () => {
+  it("der Suchtext steht nur als Eigenschaft im Feld, nicht als Attribut value", async () => {
+    const r = await personsRig();
+    const state: PersonsPanelState = { query: "Max Mustermann", selected: null };
+    const parent = r.mount((p) => { renderPersons(p, r.api, state); });
+    const input = one(parent, "input");
+    expect(input.value).toBe("Max Mustermann");
+    expect(input.getAttribute("value")).toBeNull();
+    typeQuery(parent, "Berta Beispiel");
+    expect(one(parent, "input").getAttribute("value")).toBeNull();
+  });
+});
+
 describe("Reiter Personen: Liste und Suche", () => {
   it("zeigt je Eintrag eine Zeile mit Name, Art und Zahl der Werte; ohne Einträge den Leerzustand ohne Suchfeld", async () => {
     const { parent } = await mounted();

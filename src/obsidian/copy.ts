@@ -1,5 +1,6 @@
 import { MarkdownView, Notice } from "obsidian";
 import type { App, Plugin } from "obsidian";
+import { restoreInZones } from "../core/restore-zones";
 import type { CopyMode } from "../core/settings";
 import { t } from "../vendor/kit/i18n";
 import { PSEUDONYMIZER_PLUGIN_ID, type PseudonymizerApi } from "../vendor/kit/pseudonymizer-source";
@@ -78,7 +79,7 @@ const DEFAULT_UI: CopyUi = {
 
 const SHOWN_UNKNOWN = 3;
 
-/** Die Befehle „Mit Klartext kopieren“ und „Mit Platzhaltern kopieren“ (Spec 8.6, 8.7): Klartext geht nur hinaus, wenn `restore` nichts Unlesbares meldet; sonst nennt eine Notice die Platzhalter
+/** Die Befehle „Mit Klartext kopieren“ und „Mit Platzhaltern kopieren“ (Spec 8.6, 8.7): Klartext wird nur in Fließtext und `mailto:`-Zielen eingesetzt (`restoreInZones`, W1), Platzhalter in Adressen und Code bleiben stehen und die Notice zählt sie. Klartext geht nur hinaus, wenn `restore` nichts Unlesbares meldet; sonst nennt eine Notice die Platzhalter
  *  (nie einen Klartext) und nichts wird kopiert. Vergessene gehen als Platzhalter hinaus, mit Hinweis. Ein Fehler im Befehl heißt „hat nicht geklappt“: der Text einer Ausnahme könnte Klartext tragen. */
 export async function copyCommand(host: CopyHost, kind: CopyKind, ui: CopyUi = DEFAULT_UI): Promise<void> {
   try {
@@ -86,7 +87,8 @@ export async function copyCommand(host: CopyHost, kind: CopyKind, ui: CopyUi = D
     if (text === null) { new Notice(t("notice.copy.noNote")); return; }
     if (text === "") { new Notice(t("notice.copy.empty")); return; }
     if (kind === "placeholders") { await ui.write(text, t("notice.copy.placeholders")); return; }
-    const res = host.api.restore(text, { caller: PSEUDONYMIZER_PLUGIN_ID });
+    // Klartext nur dort, wo `transform` ersetzen würde (W1): in Adressen, Link-Zielen und Code bleibt der Platzhalter.
+    const res = restoreInZones(text, (segment) => host.api.restore(segment, { caller: PSEUDONYMIZER_PLUGIN_ID }));
     if ("error" in res) { new Notice(res.error === "locked" ? t("notice.locked") : t("notice.notSetUp")); return; }
     if (res.unknown.length > 0) {
       const names = [...new Set(res.unknown)];
@@ -97,7 +99,8 @@ export async function copyCommand(host: CopyHost, kind: CopyKind, ui: CopyUi = D
     const message = res.forgotten.length > 0
       ? t("notice.copy.plainForgotten", String(res.restored), String(res.forgotten.length))
       : t("notice.copy.plain", String(res.restored));
-    await ui.write(res.text, message);
+    const written = await ui.write(res.text, message);
+    if (written && res.kept > 0) new Notice(t("notice.copy.kept", String(res.kept)));
   } catch {
     new Notice(t("notice.failed"));
   }

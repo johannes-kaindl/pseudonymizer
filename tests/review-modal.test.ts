@@ -379,6 +379,27 @@ describe("Text ansehen und weitere Stellen markieren", () => {
     expect(r.parts[0]?.value).toBe(`Hallo Person_${ids.idOf(1)},\nDie Kollegin Person_${ids.idOf(2)} schrieb. Person_${ids.idOf(2)} ruft an, Schmidtke nicht.`);
   });
 
+  it("kein Klartext in einem Attribut des Fensters: Karten, Auswahlfelder und markierte Stellen tragen laufende Nummern als Kennung (K1)", async () => {
+    const { engine } = await ready({ selection: () => "Schmidt" });
+    void engine.transform(req(NOTE));
+    await opened();
+    byText(en["modal.review.text.show"]).click();
+    byText(en["modal.review.mark.add"]).click();
+    const root = lastModal().contentEl;
+    // Das Gerüst des Mocks zählt Attribute nicht auf: geprüft werden alle Namen, die Kit-Baustein und Fenster überhaupt setzen, und die Kennungen selbst.
+    const NAMES = ["data-key", "data-id", "data-value", "data-okit-id", "value", "title", "aria-label", "placeholder", "name", "id", "for", "href", "data-tooltip"];
+    const all = (el: any): any[] => [el, ...el.querySelectorAll("div, span, button, select, option, input, mark, li, ul, label, a")];
+    const leaks: string[] = [];
+    for (const el of all(root)) for (const n of NAMES) { const v = el.getAttribute?.(n); if (typeof v === "string" && /Erika|Musterfrau|Schmidt|7654321/.test(v)) leaks.push(`${n}=${v}`); }
+    expect(leaks).toEqual([]);
+    const ids = all(root).map((el) => el.getAttribute?.("data-id")).filter((v: unknown) => typeof v === "string");
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect(id).toMatch(/^c\d+$/);
+    const marks = root.querySelectorAll(".pseu-review-open");
+    expect(marks.length).toBeGreaterThan(0);
+    for (const m of marks) expect(m.getAttribute("data-key")).toMatch(/^c\d+$/);
+  });
+
   it("Entscheidungen zu vorhandenen Karten bleiben, wenn eine Stelle hinzukommt", async () => {
     const { engine } = await ready({ selection: () => "Schmidt" });
     void engine.transform(req(NOTE));

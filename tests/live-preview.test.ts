@@ -314,6 +314,45 @@ describe("Kopieren aus Live Preview", () => {
     expect(c.set["text/plain"]).toBe([`Text \`${NAME}\` und ${CLEAR}`, "", "~~~", `code ${NAME}`, "", `mehr ${NAME}`, "~~~"].join("\n"));
   });
 
+  it("Link-Ziel, Bild-URL, HTML-Attribut, nackte URL, Kommentar und Wikilink bleiben Platzhalter; Fließtext und mailto: werden Klartext (W1)", () => {
+    const r = rig();
+    r.mode.copy = "as-shown";
+    const c = clip();
+    const doc = [
+      `Text ${NAME}`,
+      `![x](https://evil.example/p?n=${NAME})`,
+      `[l](https://evil.example/${NAME})`,
+      `<img src="https://evil.example/${NAME}.png">`,
+      `https://evil.example/u/${NAME}`,
+      `<!-- ${NAME} -->`,
+      `[[${NAME}]]`,
+      `[m](mailto:${MAIL})`,
+    ].join("\n");
+    editorCopyHandler(r.deps)(c.ev, copyView(doc));
+    expect(c.set["text/plain"]).toBe(doc.replace(`Text ${NAME}`, `Text ${CLEAR}`).replace(`mailto:${MAIL}`, "mailto:max@example.org"));
+  });
+
+  it("ein Code-Stück, das vor der Auswahl beginnt, schützt die Auswahl (Bereich über das ganze Dokument, W1)", () => {
+    const r = rig();
+    r.mode.copy = "as-shown";
+    const c = clip();
+    const doc = `\`vorn\nmitte ${NAME} hinten\` danach ${NAME}`;
+    const from = doc.indexOf("mitte");
+    const view = copyView(doc, EditorSelection.single(from, doc.length));
+    editorCopyHandler(r.deps)(c.ev, view);
+    expect(c.set["text/plain"]).toBe(`mitte ${NAME} hinten\` danach ${CLEAR}`);
+  });
+
+  it("ein Codeblock, der vor der Auswahl beginnt, schützt die Auswahlzeilen darin", () => {
+    const r = rig();
+    r.mode.copy = "as-shown";
+    const c = clip();
+    const doc = `\`\`\`\nerste\nzweite ${NAME}\n\`\`\`\n${NAME}`;
+    const from = doc.indexOf("zweite");
+    editorCopyHandler(r.deps)(c.ev, copyView(doc, EditorSelection.single(from, doc.length)));
+    expect(c.set["text/plain"]).toBe(`zweite ${NAME}\n\`\`\`\n${CLEAR}`);
+  });
+
   it("eine Auswahl, die einen Platzhalter nur teilweise umfasst, trägt nie einen Klartext-Rest", () => {
     const r = rig();
     r.mode.copy = "as-shown";

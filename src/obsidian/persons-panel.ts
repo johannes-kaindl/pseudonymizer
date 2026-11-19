@@ -55,7 +55,8 @@ export function renderPersons(parent: HTMLElement, api: PersonsApi, state: Perso
     return;
   }
   const root = parent.createDiv({ cls: "pseu-persons-panel" });
-  const search = root.createEl("input", { cls: "pseu-search", attr: { type: "search", placeholder: t("view.persons.search.placeholder"), "aria-label": t("view.persons.search.label"), value: state.query } });
+  const search = root.createEl("input", { cls: "pseu-search", attr: { type: "search", placeholder: t("view.persons.search.placeholder"), "aria-label": t("view.persons.search.label") } });
+  // Nur die Eigenschaft, nie das Attribut `value`: der Suchtext ist meist ein Name (K1).
   search.value = state.query;
   const list = root.createDiv({ cls: "pseu-persons-list" });
 

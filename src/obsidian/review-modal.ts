@@ -87,6 +87,18 @@ class ReviewModal extends Modal {
   private markKind: CandidateKind = "person";
   private lastSelection = "";
   private selectionCleanup: (() => void) | null = null;
+  /** Kennung im DOM je Karte: eine laufende Nummer (`c0`, `c1`, …); die Zuordnung zum `candidateKey` (er trägt den Klartext) liegt nur hier im Speicher, nie in einem Attribut (K1). */
+  private readonly domIds = new Map<string, string>();
+  private readonly keyByDomId = new Map<string, string>();
+
+  private domId(key: string): string {
+    const known = this.domIds.get(key);
+    if (known !== undefined) return known;
+    const id = `c${String(this.domIds.size)}`;
+    this.domIds.set(key, id);
+    this.keyByDomId.set(id, key);
+    return id;
+  }
 
   constructor(app: App, private readonly ctx: ReviewContext, private readonly opts: ReviewModalOptions, done: (result: ReviewResult | null) => void) {
     super(app);
@@ -179,7 +191,7 @@ class ReviewModal extends Modal {
       const also = alsoOf(card, this.cards);
       return {
         kind: "candidate",
-        id: card.key,
+        id: this.domId(card.key),
         found: card.value,
         type: t(KIND_KEY[card.kind]),
         places: shown.map((p) => contextOf(this.ctx.parts, p)),
@@ -204,11 +216,11 @@ class ReviewModal extends Modal {
       onAction: () => undefined,
       onBulk: () => undefined,
       onWay: (id, way) => {
-        const card = this.cards.find((c) => c.key === id);
+        const card = this.cards.find((c) => c.key === this.keyByDomId.get(id));
         if (card !== undefined && (WAYS as readonly string[]).includes(way)) { card.way = way as Way; this.updateApply(); }
       },
       onOwner: (id, owner) => {
-        const card = this.cards.find((c) => c.key === id);
+        const card = this.cards.find((c) => c.key === this.keyByDomId.get(id));
         if (card !== undefined) card.owner = owner;
       },
       onError: () => { new Notice(t("notice.failed")); },
@@ -235,7 +247,7 @@ class ReviewModal extends Modal {
       const body = host.createDiv({ cls: "pseu-review-text" });
       for (const seg of textSegments(part, open, known)) {
         if (seg.kind === "plain") body.createSpan({ text: seg.text });
-        else if (seg.kind === "open") body.createEl("mark", { cls: "pseu-review-open", text: seg.text, attr: { "data-key": seg.key } });
+        else if (seg.kind === "open") body.createEl("mark", { cls: "pseu-review-open", text: seg.text, attr: { "data-key": this.domId(seg.key) } });
         else body.createSpan({ cls: "pseu-review-known", text: seg.text });
       }
     }
