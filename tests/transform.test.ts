@@ -77,6 +77,52 @@ describe("K2: keep bei längeren bekannten Formen und im Dateinamen (Sicherheits
   });
 });
 
+describe("N4: die Dateinamenform eines keep-Werts sperrt nur in Dateinamen-Teilen (Sicherheits-Lesung Runde 2)", () => {
+  const withMuster = (): PlaceholderTable => withValue(sampleTable(), PERSON, null, "Max Muster");
+
+  it("keep: [\"Max-Muster\"]: im Text ersetzt, im Dateinamen unverändert", () => {
+    const r = req([part("t", "Hallo Max Muster"), part("f", "Max_Muster.pdf", "filename")], { keep: ["Max-Muster"] });
+    const out = known(r, withMuster());
+    expect(out[0]).toBe(`Hallo ${P}_3`);
+    expect(out[1]).toBe("Max_Muster.pdf");
+  });
+
+  it("dasselbe in einer Zeile (`line`)", () => {
+    expect(known(req([part("l", "Max Muster", "line")], { keep: ["Max-Muster"] }), withMuster())[0]).toBe(`${P}_3`);
+  });
+
+  it("ohne Dateinamen-Teil ändert sich nichts gegenüber früher: ein keep-Wert mit Bindestrich bleibt sperrend, wo er genau so steht", () => {
+    expect(known(req([part("t", "Hallo Max-Muster")], { keep: ["Max-Muster"] }), withMuster())[0]).toBe("Hallo Max-Muster");
+  });
+});
+
+describe("N6: derselbe Wert an einer Stelle, die kein Erkenner fand, wird mit ersetzt (Spec 8.5: eine Karte je Wert)", () => {
+  const NAME = "Erika Musterfrau";
+  const text = `Hallo ${NAME},\n\nBis bald, Hallo ${NAME}, und ${NAME}.\n`;
+  const answer = (r: TransformRequest, p: PlanResult): Map<string, Answer> => new Map(p.candidates.map((c) => [candidateKey(c), { action: "replace", carrier: "person" } as Answer]));
+
+  for (const kind of ["text", "line"] as const) {
+    it(`${kind}: nach „Ersetzen“ steht an keiner Stelle des Werts mehr Klartext`, () => {
+      const r = req([part("a", kind === "line" ? `Hallo ${NAME}, Bis bald, Hallo ${NAME}, und ${NAME}.` : text, kind)]);
+      const p = plan(r);
+      const found = p.candidates.filter((c) => c.value === NAME).length;
+      expect(found).toBeGreaterThan(0);
+      const a = ok(applyPlan(r, p, sampleTable(), answer(r, p), counterIds()));
+      expect(a.parts[0]?.value).not.toContain(NAME);
+      const id = a.table.entries.find((e) => e.id === "0000000001")?.id;
+      expect(id).toBeDefined();
+      expect(a.parts[0]?.value.match(/Person_0000000001/g)).toHaveLength(3);
+    });
+  }
+
+  it("keep-here für den Wert lässt jede Stelle stehen", () => {
+    const r = req([part("a", text)]);
+    const p = plan(r);
+    const stay = new Map<string, Answer>(p.candidates.map((c) => [candidateKey(c), { action: "keep-here" }]));
+    expect(ok(applyPlan(r, p, sampleTable(), stay, counterIds())).parts[0]?.value).toBe(text);
+  });
+});
+
 describe("keep, Ausnahmeliste und „hier lassen“", () => {
   it("keep des Aufrufers: der Wert bleibt, ohne Kandidaten", () => {
     const r = req([part("a", "Max Mustermann <max@example.org> und Max")], { keep: ["Max Mustermann", "MAX@example.org"] });

@@ -334,6 +334,9 @@ const DETECTORS: readonly { group: RuleGroup; run: Detector }[] = [
   { group: "postal-address", run: detectPostalAddress },
 ];
 
+/** Alle Erkennergruppen aus: die Planung findet dann nur noch, was die Tabelle schon kennt. */
+const NO_RULES: Record<RuleGroup, boolean> = { patterns: false, salutation: false, signature: false, "header-lines": false, "postal-address": false };
+
 type KeepFn = (field: PlaceholderField | null, text: string) => boolean;
 
 /** Wer in `keep` steht, in der Ausnahmeliste oder für dieses Dokument „hier lassen“: in der Form des jeweiligen Feldes verglichen. */
@@ -377,19 +380,20 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
   const keep = keepMatcher(req.keep ?? [], decisions, req.documentKey);
   const lookup = (field: PlaceholderField | null, text: string): string | null => formatFound(tableFindValue(table, field, text), lang);
 
-  // Die Formen, nach denen im Text gesucht wird.
-  const forms: FormSet = { map: new Map(), first: new Set(), maxWords: 1, maxLength: 0 };
+  // Die Formen, nach denen im Text gesucht wird. Sie werden gesammelt und am Ende gebaut: für Dateinamen gibt es eine eigene Liste (N4).
+  const adds: { field: ScanField; text: string; tag: Tag }[] = [];
   for (const v of table.values) {
     if (v.field !== null && v.field !== "address" && v.field !== "mail") continue;
-    if (lookup(v.field, v.text) !== null) addForm(forms, v.field, v.text, "known");
+    if (lookup(v.field, v.text) !== null) adds.push({ field: v.field, text: v.text, tag: "known" });
   }
-  for (const k of req.keep ?? []) for (const f of SCAN_FIELDS) addForm(forms, f, k, "keep");
+  for (const k of req.keep ?? []) for (const f of SCAN_FIELDS) adds.push({ field: f, text: k, tag: "keep" });
   // Im Dateinamen trennen `_` und `-` wie ein Leerzeichen (`viewOf`): ein `keep`-Wert mit Bindestrich (`max-muster@example.org`) wäre dort nie zu finden, und sein hinterer Teil würde Kandidat (K2b).
-  // Darum steht er zusätzlich in seiner Dateinamenform als Sperre, wenn die Anfrage einen Dateinamen trägt.
+  // Darum steht er zusätzlich in seiner Dateinamenform als Sperre, aber nur in der Formenliste der Dateinamen-Teile: in Text und Zeilen sperrte `Max Muster` sonst einen bekannten Wert, der nicht in `keep` steht (N4).
+  const filenameAdds: { field: ScanField; text: string; tag: Tag }[] = [];
   if (req.parts.some((p) => p.kind === "filename")) {
     for (const k of req.keep ?? []) {
       const asName = k.replace(/[_-]/g, " ");
-      if (asName !== k) for (const f of SCAN_FIELDS) addForm(forms, f, asName, "keep");
+      if (asName !== k) for (const f of SCAN_FIELDS) filenameAdds.push({ field: f, text: asName, tag: "keep" });
     }
   }
 
@@ -405,14 +409,21 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
     const name = slotOf(e.name, null);
     const email = slotOf(e.email, "mail");
     entities.push({ ...(name ? { name } : {}), ...(email ? { email } : {}) });
-    if (name && !name.kept && name.placeholder === null) addForm(forms, null, name.value, "entity");
-    if (email && !email.kept && email.placeholder === null) addForm(forms, "mail", email.value, "entity");
+    if (name && !name.kept && name.placeholder === null) adds.push({ field: null, text: name.value, tag: "entity" });
+    if (email && !email.kept && email.placeholder === null) adds.push({ field: "mail", text: email.value, tag: "entity" });
     if (name && email && !name.kept && !email.kept) {
       partner.set(`|${normalizeTableValue(null, name.value)}`, email.value);
       partner.set(`mail|${normalizeTableValue("mail", email.value)}`, name.value);
     }
   });
   const partnerOf = (field: PlaceholderField | null, text: string): string | null => partner.get(`${field ?? ""}|${normalizeTableValue(field, text)}`) ?? null;
+  const buildForms = (list: readonly { field: ScanField; text: string; tag: Tag }[]): FormSet => {
+    const set: FormSet = { map: new Map(), first: new Set(), maxWords: 1, maxLength: 0 };
+    for (const a of list) addForm(set, a.field, a.text, a.tag);
+    return set;
+  };
+  const forms = buildForms(adds);
+  const filenameForms = filenameAdds.length > 0 ? buildForms([...adds, ...filenameAdds]) : forms;
 
   const edits: PlannedEdit[] = [];
   const candidates: Candidate[] = [];
@@ -437,7 +448,7 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
       const kept = tag === "keep" || keep(field, text);
       hits.push({ start, end, text, field, kind, rank: kept ? RANK_KEPT : placeholder !== null ? RANK_KNOWN : rank, kept, placeholder: kept ? null : placeholder, confidence, owner });
     };
-    for (const h of scanForms(view, forms)) {
+    for (const h of scanForms(view, part.kind === "filename" ? filenameForms : forms)) {
       const field = h.field;
       push(h.start, h.end, field, kindOfField(field), RANK_ENTITY, CONFIDENCE.high, h.tag);
     }
@@ -665,9 +676,21 @@ export function applyPlan(req: TransformRequest, plan: PlanResult, base: Placeho
     resolved.set(key, text);
   }
 
+  // Eine Karte je Wert (Spec 8.5, N6): Der Wert steht jetzt in der Tabelle. Alle Teile werden noch einmal gegen die nun bekannten Formen geplant (ohne Erkenner: nur Bekanntes zählt), und jede Stelle, die der Plan nicht
+  // schon belegt, wird mit ersetzt. Sonst bliebe derselbe Wert dort als Klartext stehen, wo kein Erkenner ihn fand (`Hallo Erika Musterfrau,` am Zeilenanfang wird gefunden, derselbe Gruß mitten in der Zeile nicht).
+  // Stellen mit „hier lassen“ und „immer lassen“ bleiben, weil diese Entscheidungen schon in `table` stehen und die Planung sie wie `keep` behandelt.
+  let planned = plan.edits;
+  if (changed || resolved.size > 0) {
+    const taken = new Map<string, TextRange[]>();
+    for (const e of plan.edits) taken.set(e.partId, [...(taken.get(e.partId) ?? []), { start: e.start, end: e.end }]);
+    const extra = planTransform(req, table, decisionsOf(table), NO_RULES, lang).edits
+      .filter((e) => e.placeholder !== null && !(taken.get(e.partId) ?? []).some((t) => e.start < t.end && t.start < e.end));
+    planned = [...plan.edits, ...extra];
+  }
+
   // Die Texte: bekannte Stellen mit ihrem Platzhalter, offene mit dem Ergebnis ihrer Antwort (keine Antwort „ersetzen“: die Stelle bleibt).
   const byPart = new Map<string, Edit[]>();
-  for (const e of plan.edits) {
+  for (const e of planned) {
     const text = e.placeholder ?? (e.candidate === null ? null : (resolved.get(candidateKey(e.candidate)) ?? null));
     if (text === null) continue;
     const list = byPart.get(e.partId) ?? [];
