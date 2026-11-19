@@ -104,6 +104,8 @@ export interface Device {
   wiped: ChainState[];
   /** Jeder Schlüssel, den `keys.read()` herausgegeben hat. */
   keyReads: Uint8Array[];
+  /** Der Name dieses Geräts, wie ihn das Plugin aus dem Gerätezustand liest; ein Test ändert ihn, um die Umbenennung zu spielen. */
+  name: { current: string };
 }
 
 export interface DeviceOptions {
@@ -153,14 +155,15 @@ export function makeDevice(fs: FakeFs, o: DeviceOptions): Device {
   const memory = new MemoryTable();
   const reports: FileProblem[] = [];
   const wiped: ChainState[] = [];
+  const name = { current: o.name ?? o.deviceId };
   const opts: TableStoreOptions = {
     files,
     keys,
     memory,
-    deviceName: () => o.name ?? o.deviceId,
+    deviceName: () => name.current,
     defaultLanguage: () => o.language ?? "de",
     onProblem: (p) => { reports.push(p); },
     ratchet: { advance, advanceTo, encryptionKey, wipe: (s) => { wiped.push(s); wipe(s); }, maxJump: RATCHET_MAX_JUMP },
   };
-  return { id: o.deviceId, store: createTableStore(opts), memory, secrets, keys, files, manual, reports, log, wiped, keyReads };
+  return { id: o.deviceId, store: createTableStore(opts), memory, secrets, keys, files, manual, reports, log, wiped, keyReads, name };
 }

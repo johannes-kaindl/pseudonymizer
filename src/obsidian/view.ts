@@ -1,28 +1,41 @@
 import { ItemView } from "obsidian";
 import type { WorkspaceLeaf } from "obsidian";
 import { VIEW_TABS, VIEW_TYPE_PSEUDONYMIZER, stateIndicator, type CommandId, type ViewTab } from "../core/commands";
-import type { PluginState } from "../core/status";
+import type { DevicesModel } from "../core/devices-view";
+import type { LockReason, PluginState } from "../core/status";
 import { t } from "../vendor/kit/i18n";
 import { buildHubInto, type HubController, type HubPanel } from "../vendor/kit-obsidian/hub";
 import { buildStatus, paintStatus } from "../vendor/kit-obsidian/status-indicator";
+import { renderDeviceFiles, renderDevices } from "./devices-panel";
 
 /** Was die Ansicht vom Plugin braucht (`PseudonymizerPlugin` erfüllt es über Adapter in `main.ts`). */
 export interface ViewHost {
   state(): PluginState;
   run(id: CommandId): void;
   onChange(cb: () => void): () => void;
+  /** Warum das Plugin gesperrt ist (`null`, wenn nicht gesperrt). */
+  lockReason(): LockReason | null;
+  /** Der Ordner der Tabelle aus den Einstellungen. */
+  folder(): string;
+  /** Das Modell für „Geräte und Schlüssel“. */
+  devices(): DevicesModel;
+  deviceName(): string;
+  setDeviceName(name: string): void;
 }
 
-const EMPTY_KEY: Record<ViewTab, string> = {
+const EMPTY_KEY: Record<Exclude<ViewTab, "devices">, string> = {
   persons: "view.empty.persons",
   exceptions: "view.empty.exceptions",
-  devices: "view.empty.devices",
 };
 
-/** Ein Reiter: Zustand oben als Status-Indikator, darunter ein Leerzustand. Der Inhalt der Reiter folgt in den Aufgaben 12 bis 15. */
+const LOCK_REASONS: readonly LockReason[] = ["no-key", "table-missing", "foreign-chain", "key-opens-nothing", "unreadable", "key-corrupt", "storage-failed"];
+
+/** Ein Reiter: Zustand oben als Status-Indikator, darunter der Inhalt. „Geräte und Schlüssel“ ist seit Aufgabe 12 gefüllt, Personen und Ausnahmen zeigen bis Aufgabe 15 und 18 einen Leerzustand. */
 class TabPanel implements HubPanel<ViewTab> {
   private container: HTMLElement | null = null;
   private unsubscribe: (() => void) | null = null;
+  /** Solange das Namensfeld den Fokus hat, malt eine Änderung die Seite nicht neu (sonst ginge die Eingabe verloren). */
+  private editing = false;
   constructor(private readonly tab: (typeof VIEW_TABS)[number], private readonly host: ViewHost) {}
 
   get id(): ViewTab { return this.tab.id; }
@@ -41,7 +54,7 @@ class TabPanel implements HubPanel<ViewTab> {
 
   private render(): void {
     const c = this.container;
-    if (!c) return;
+    if (!c || this.editing) return;
     c.empty();
     c.addClass("pseu-panel");
     const state = this.host.state();
@@ -49,16 +62,27 @@ class TabPanel implements HubPanel<ViewTab> {
     const ind = stateIndicator(state);
     paintStatus(buildStatus(c), ind.phase, t(ind.textKey));
 
-    const empty = c.createDiv({ cls: "pseu-empty" });
     if (state === "ready") {
-      empty.createDiv({ text: t(EMPTY_KEY[this.tab.id]) });
+      if (this.tab.id === "devices") renderDevices(c, this.host, (on) => { this.editing = on; if (!on) this.render(); });
+      else c.createDiv({ cls: "pseu-empty" }).createDiv({ text: t(EMPTY_KEY[this.tab.id]) });
       return;
     }
-    empty.createDiv({ text: t(state === "locked" ? "view.empty.locked" : "view.empty.notSetUp") });
-    const actions = empty.createDiv({ cls: "pseu-empty-actions" });
+    const empty = c.createDiv({ cls: "pseu-empty" });
+    const actions = (): HTMLElement => empty.createDiv({ cls: "pseu-empty-actions" });
+    if (state === "locked") {
+      // Der Ausweg aus `locked`: Hinweis auf die Ordner-Einstellung und „Code eingeben“; nie „neu einrichten“ als Vorgabe (Plan Aufgabe 12).
+      const reason = this.host.lockReason();
+      const key = reason !== null && LOCK_REASONS.includes(reason) ? `view.locked.${reason}` : "view.empty.locked";
+      empty.createDiv({ text: t(key, this.host.folder()) });
+      this.button(actions(), t("view.action.enterCode"), "enter-recovery-code");
+      if (this.tab.id === "devices") renderDeviceFiles(c, this.host.devices());
+      return;
+    }
+    empty.createDiv({ text: t("view.empty.notSetUp") });
+    const box = actions();
     // „Einrichten“ und „Code eingeben“ sind gleichwertig (Spec 9): kein `mod-cta`, beide gleich gewichtet.
-    if (state === "not-set-up") this.button(actions, t("view.action.setUp"), "set-up");
-    this.button(actions, t("view.action.enterCode"), "enter-recovery-code");
+    this.button(box, t("view.action.setUp"), "set-up");
+    this.button(box, t("view.action.enterCode"), "enter-recovery-code");
   }
 
   private button(parent: HTMLElement, text: string, id: CommandId): void {

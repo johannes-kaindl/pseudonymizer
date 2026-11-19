@@ -6,6 +6,7 @@ import type { PluginState } from "./core/status";
 import type { CommandId, ViewTab } from "./core/commands";
 import { VIEW_TYPE_PSEUDONYMIZER } from "./core/commands";
 import { DEVICE_KEY_PREFIX } from "./core/constants";
+import { buildDevicesModel, type DevicesModel } from "./core/devices-view";
 import { MemoryTable } from "./core/memory-table";
 import { loadSettings, type PseudonymizerSettings } from "./core/settings";
 import { pickLang, setLang, t } from "./vendor/kit/i18n";
@@ -15,7 +16,9 @@ import type { PseudonymizerApi } from "./vendor/kit/pseudonymizer-source";
 import { PseudonymizerEngine } from "./obsidian/engine";
 import { registerCommands, runCommand } from "./obsidian/commands";
 import { createDeviceState, type DeviceState } from "./obsidian/device";
-import { createKeyStore } from "./obsidian/key-store";
+import { createKeyStore, type KeyStore } from "./obsidian/key-store";
+import { runEnterCode, runSetUp, runShowCode, type SetupHost } from "./obsidian/setup";
+import { createSetupUi } from "./obsidian/setup-ui";
 import { createTableStore, type FileProblem, type TableStore } from "./obsidian/table-store";
 import { createPluginStatusBar, type PluginStatusBar } from "./obsidian/status-bar";
 import { PseudonymizerView } from "./obsidian/view";
@@ -53,6 +56,9 @@ export default class PseudonymizerPlugin extends Plugin {
   engine: Engine = new PseudonymizerEngine(this.memory, () => this.tableStore);
   /** Öffnet, vereinigt und schreibt die Gerätedateien (Aufgabe 11); `null`, solange sich keine Geräte-ID festhalten lässt. */
   tableStore: TableStore | null = null;
+  /** Der Schlüssel dieses Geräts im Schlüsselbund; angelegt beim Laden. */
+  keys!: KeyStore;
+  private deviceId = "";
   private stopWatching: (() => void) | null = null;
   private tablesFolder: string | null = null;
   private statusBar: PluginStatusBar | null = null;
@@ -62,11 +68,17 @@ export default class PseudonymizerPlugin extends Plugin {
     setLang(pickLang(safeGetLanguage()));
     this.settings = loadSettings(await this.loadData());
     this.device = createDeviceState(this.app);
+    this.keys = createKeyStore(obsidianSecretStore(this.app));
     this.api = createApi(() => this.engine);
     this.registerView(VIEW_TYPE_PSEUDONYMIZER, (leaf) => new PseudonymizerView(leaf, {
       state: () => this.state(),
       run: (id) => { this.run(id); },
       onChange: (cb) => this.onChange(cb),
+      lockReason: () => this.memory.reason(),
+      folder: () => this.settings.folder,
+      devices: () => this.devicesModel(),
+      deviceName: () => this.device.deviceName,
+      setDeviceName: (name) => { this.setDeviceName(name); },
     }));
     registerCommands(this, this);
     this.addSettingTab(new PseudonymizerSettingTab(this.app, this));
@@ -137,13 +149,14 @@ export default class PseudonymizerPlugin extends Plugin {
       this.emitChange();
       return;
     }
+    this.deviceId = deviceId;
     const files = createDeviceFiles({ folder: this.settings.folder, extension: DEVICE_FILE_EXTENSION, deviceId, ports: defaultDeviceFilePorts(this.app) });
     const store = createTableStore({
       files,
-      keys: createKeyStore(obsidianSecretStore(this.app)),
+      keys: this.keys,
       memory: this.memory,
       deviceName: () => this.device.deviceName,
-      defaultLanguage: () => (safeGetLanguage()?.startsWith("de") === true ? "de" : "en"),
+      defaultLanguage: () => this.defaultPlaceholderLanguage(),
       onProblem: (p) => { announceProblem(p); },
     });
     this.tableStore = store;
@@ -166,9 +179,53 @@ export default class PseudonymizerPlugin extends Plugin {
     this.emitChange();
   }
 
-  /** Ob der Ordner der Tabelle nicht mehr frei änderbar ist, weil die Tabelle eingerichtet ist.
-   *  Bis das Einrichten (Aufgabe 12) den Zustand kennt, ist der Ordner frei. */
+  /** Ob der Ordner der Tabelle nicht mehr frei änderbar ist, weil dieses Gerät eingerichtet ist: ein Schlüssel liegt im Schlüsselbund (auch ein beschädigter und auch dann,
+   *  wenn der Ordner gerade nichts hergibt; dann ist der Ordner ja der Ausweg). Ohne Schlüssel ist der Ordner frei. */
   folderLocked(): boolean {
-    return false;
+    return this.keys.read() !== null;
   }
+
+  /** Sprache der Platzhalter, wenn noch keine Gerätedatei eine nennt: nach der Sprache von Obsidian. */
+  private defaultPlaceholderLanguage(): "de" | "en" {
+    return safeGetLanguage()?.startsWith("de") === true ? "de" : "en";
+  }
+
+  /** Das Modell für den Reiter „Geräte und Schlüssel“. */
+  devicesModel(): DevicesModel {
+    return buildDevicesModel({
+      state: this.state(),
+      reason: this.memory.reason(),
+      stand: this.memory.stand(),
+      devices: this.memory.devices(),
+      ownDeviceId: this.deviceId,
+      problems: this.tableStore?.problems() ?? [],
+      codeStand: this.memory.codeStand(),
+      table: this.memory.table(),
+    });
+  }
+
+  /** Speichert den Gerätenamen und schreibt ihn sofort in die eigene Gerätedatei (gesperrt oder nicht eingerichtet wird nichts geschrieben; der Name gilt dann ab dem nächsten Schreiben). */
+  private setDeviceName(name: string): void {
+    this.device.setDeviceName(name);
+    void (this.tableStore?.persist() ?? Promise.resolve()).then(() => { this.emitChange(); });
+  }
+
+  /** Die Abläufe für Einrichten, Code eingeben und Code anzeigen brauchen den Baustein der Gerätedateien; ohne ihn (keine Geräte-ID) sagt eine Meldung, dass es nicht geht. */
+  private setupHost(): SetupHost | null {
+    const store = this.tableStore;
+    if (store === null) { new Notice(t("notice.failed")); return null; }
+    return {
+      store,
+      memory: this.memory,
+      keys: this.keys,
+      ui: createSetupUi(this.app, () => this.settings.folder),
+      folder: () => this.settings.folder,
+      defaultLanguage: () => this.defaultPlaceholderLanguage(),
+      changed: () => { this.emitChange(); },
+    };
+  }
+
+  async runSetUp(): Promise<void> { const h = this.setupHost(); if (h !== null) await runSetUp(h); }
+  async runEnterCode(): Promise<void> { const h = this.setupHost(); if (h !== null) await runEnterCode(h); }
+  async runShowCode(): Promise<void> { const h = this.setupHost(); if (h !== null) await runShowCode(h); }
 }

@@ -100,6 +100,7 @@ function makeHost(state: PluginState = "ready", over: { copyMode?: "placeholder"
   let shown = true;
   let changes = 0;
   const opened: (string | undefined)[] = [];
+  const flows: string[] = [];
   const added: { id: string; name: string; icon?: string; checkCallback?: (checking: boolean) => boolean }[] = [];
   const settings: PseudonymizerSettings = loadSettings({ copyMode: over.copyMode ?? "placeholder" });
   const host: CommandHost = {
@@ -110,9 +111,12 @@ function makeHost(state: PluginState = "ready", over: { copyMode?: "placeholder"
     state: () => state,
     openView: (tab) => { opened.push(tab); return Promise.resolve(); },
     emitChange: () => { changes++; },
+    runSetUp: () => { flows.push("set-up"); return Promise.resolve(); },
+    runEnterCode: () => { flows.push("enter-code"); return Promise.resolve(); },
+    runShowCode: () => { flows.push("show-code"); return Promise.resolve(); },
   };
   const plugin = { addCommand: (c: (typeof added)[number]) => { added.push(c); return c; } };
-  return { host, plugin, added, opened, shown: () => shown, changes: () => changes };
+  return { host, plugin, added, opened, flows, shown: () => shown, changes: () => changes };
 }
 
 const lastNotice = (): string => String(Notice.instances[Notice.instances.length - 1]?.message ?? "");
@@ -173,11 +177,21 @@ describe("registerCommands", () => {
   it("a command whose function is missing shows the 'not available yet' notice", () => {
     const { host, plugin, added } = makeHost("ready", { editor: true });
     registerCommands(plugin, host);
-    for (const id of ["pseudonymize-selection", "pseudonymize-note", "copy-plaintext", "forget-person", "show-recovery-code", "enter-recovery-code", "replace-key", "set-up"]) {
+    for (const id of ["pseudonymize-selection", "pseudonymize-note", "copy-plaintext", "forget-person", "replace-key"]) {
       Notice.instances.length = 0;
       added.find((c) => c.id === id)!.checkCallback?.(false);
       expect(lastNotice(), id).toBe(STRINGS.en["notice.notAvailable"]);
     }
+  });
+
+  it("set-up, enter-recovery-code and show-recovery-code run their flows, not the 'not available yet' notice", () => {
+    const { host, plugin, added, flows } = makeHost("ready");
+    registerCommands(plugin, host);
+    Notice.instances.length = 0;
+    // set-up and enter-recovery-code are open in every state (the flows decide what to say); show-recovery-code needs a table that is set up
+    for (const id of ["set-up", "enter-recovery-code", "show-recovery-code"]) added.find((c) => c.id === id)!.checkCallback?.(false);
+    expect(flows).toEqual(["set-up", "enter-code", "show-code"]);
+    expect(Notice.instances).toHaveLength(0);
   });
 
   it("lookup-placeholder and search-plaintext are wired to their functions, not to the 'not available yet' notice", async () => {
@@ -215,11 +229,12 @@ describe("registerCommands", () => {
   });
 
   it("runCommand (status bar, view) applies the same gate", () => {
-    const { host } = makeHost("not-set-up");
+    const { host, flows } = makeHost("not-set-up");
     runCommand(host, "forget-person");
     expect(lastNotice()).toBe(STRINGS.en["notice.notSetUp"]);
     Notice.instances.length = 0;
     runCommand(host, "set-up");
-    expect(lastNotice()).toBe(STRINGS.en["notice.notAvailable"]);
+    expect(flows).toEqual(["set-up"]);
+    expect(Notice.instances).toHaveLength(0);
   });
 });

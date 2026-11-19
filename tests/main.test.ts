@@ -112,6 +112,56 @@ describe("PseudonymizerPlugin", () => {
     await plugin.onload();
     expect(plugin.folderLocked()).toBe(false);
   });
+  it("the folder is locked as soon as this device holds a key, also when the folder gives nothing (the folder is the way out) or the key is damaged", async () => {
+    const fs = new FakeFs("_pseudonymizer");
+    const secrets = new Map<string, string>();
+    const { plugin } = load(fs, secrets);
+    await plugin.onload();
+    await flush();
+    expect(plugin.folderLocked()).toBe(false);
+    const code = encodeRecoveryCode(await contentAt(CHAIN, 0));
+    if (!code.ok) throw new Error("fixture");
+    secrets.set("pseudonymizer-key", code.code);
+    expect(plugin.folderLocked()).toBe(true);
+    expect(plugin.api.status().state).not.toBe("ready");
+    secrets.set("pseudonymizer-key", "kaputt");
+    expect(plugin.folderLocked()).toBe(true);
+    secrets.set("pseudonymizer-key", "");
+    expect(plugin.folderLocked()).toBe(false);
+  });
+  it("the device model lists the files that arrived, also while locked, and names this device", async () => {
+    const fs = new FakeFs("_pseudonymizer");
+    await seedFile(fs, { deviceId: "dev-seed", stand: 1, table: personTable(ID_A, "Max Mustermann"), name: "iPhone" });
+    const { plugin } = load(fs);
+    await plugin.onload();
+    await flush();
+    const m = plugin.devicesModel();
+    expect(m.state).toBe("locked");
+    expect(m.reason).toBe("no-key");
+    expect(m.rows.map((r) => [r.deviceId, r.status, r.stand])).toEqual([["dev-seed", "not-opened", 1]]);
+    expect(m.rows[0].own).toBe(false);
+  });
+  it("a new device name is stored on the device and written to the own device file at once", async () => {
+    const fs = new FakeFs("_pseudonymizer");
+    await seedFile(fs, { deviceId: "dev-seed", stand: 0, table: personTable(ID_A, "Max Mustermann") });
+    const secrets = new Map<string, string>();
+    const code = encodeRecoveryCode(await contentAt(CHAIN, 0));
+    if (!code.ok) throw new Error("fixture");
+    secrets.set("pseudonymizer-key", code.code);
+    const { plugin } = load(fs, secrets);
+    await plugin.onload();
+    await flush();
+    let changes = 0;
+    plugin.onChange(() => { changes++; });
+    const own = (): string[] => fs.names().filter((n) => n.endsWith(".pseudo") && n !== "dev-seed.pseudo");
+    const before = own();
+    (plugin as unknown as { setDeviceName(n: string): void }).setDeviceName("Mac Küche");
+    await flush();
+    expect(plugin.device.deviceName).toBe("Mac Küche");
+    expect(own().length).toBeGreaterThanOrEqual(before.length);
+    expect(plugin.devicesModel().rows.find((r) => r.own)?.name).toBe("Mac Küche");
+    expect(changes).toBeGreaterThan(0);
+  });
   it("starting with garbage in data.json falls back to the defaults", async () => {
     const { plugin } = load();
     await plugin.saveData({ folder: "../x", copyMode: 7, secret: "Max Mustermann" });

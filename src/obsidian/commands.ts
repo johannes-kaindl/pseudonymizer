@@ -17,6 +17,10 @@ export interface CommandHost {
   memory: MemoryTable;
   state(): PluginState;
   openView(tab?: ViewTab): Promise<void>;
+  /** Einrichten, Code eingeben und Code anzeigen (`setup.ts`); sie melden dem Nutzer selbst, was geschah. */
+  runSetUp(): Promise<void>;
+  runEnterCode(): Promise<void>;
+  runShowCode(): Promise<void>;
   /** Sagt Statusleiste und Ansicht, dass sich etwas geändert hat. */
   emitChange(): void;
 }
@@ -34,10 +38,10 @@ const HANDLERS: Record<CommandId, (host: CommandHost) => void> = {
   "copy-plaintext": notAvailable,
   "copy-placeholders": notAvailable,
   "forget-person": notAvailable,
-  "show-recovery-code": notAvailable,
-  "enter-recovery-code": notAvailable,
+  "show-recovery-code": (h) => { void h.runShowCode(); },
+  "enter-recovery-code": (h) => { void h.runEnterCode(); },
   "replace-key": notAvailable,
-  "set-up": notAvailable,
+  "set-up": (h) => { void h.runSetUp(); },
 };
 
 function gateOf(host: CommandHost, spec: CommandSpec): CommandGate {

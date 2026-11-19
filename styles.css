@@ -137,6 +137,24 @@
 /* Tippfläche am Telefon (UI-STANDARD). */
 .is-mobile .pseu-code-confirm, .is-mobile .pseu-code-copy { min-height: var(--size-4-12); }
 
+/* Einrichten-Fenster und Reiter „Geräte und Schlüssel“. */
+.pseu-field-label { margin-bottom: var(--size-2-1); font-weight: var(--font-semibold); }
+.pseu-devices, .pseu-devices-stray { margin: 0; padding: 0; list-style: none; }
+.pseu-devices-stray { padding-inline-start: var(--size-4-3); overflow-wrap: anywhere; }
+.pseu-device {
+  display: flex; flex-direction: column; gap: var(--size-2-1);
+  padding: var(--size-4-2) 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.pseu-device-name { font-weight: var(--font-semibold); overflow-wrap: anywhere; }
+.pseu-device-own, .pseu-device-meta { color: var(--text-muted); font-size: var(--font-ui-small); }
+.pseu-devices-panel { display: flex; flex-direction: column; gap: var(--size-4-2); }
+.pseu-devices-panel h4 { margin: var(--size-4-3) 0 0; }
+.pseu-devices-key { display: flex; flex-direction: column; gap: var(--size-2-1); }
+.pseu-devices-actions { display: flex; flex-wrap: wrap; gap: var(--size-4-2); }
+/* Tippfläche mindestens 44 px am Telefon (UI-STANDARD). */
+.is-mobile .pseu-devices-actions button { min-height: var(--size-4-11); }
+
 /* Platzhalter nachschlagen: Status als Symbol und Text, Platzhalter und Werte brechen um statt abzuschneiden. */
 .pseu-lookup-status { display: flex; align-items: center; gap: var(--size-4-2); margin-bottom: var(--size-4-3); font-weight: var(--font-semibold); }
 .pseu-lookup-status-icon { display: inline-flex; }
