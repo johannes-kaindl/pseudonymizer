@@ -4,7 +4,8 @@
 // Zerlegung: der Text hinter dem Frontmatter-Block ist ein Teil (`kind: "text"`, Id `text`); jede Text-Eigenschaft ist ein Teil (`kind: "line"`), eine Liste ein Teil je Eintrag.
 // Gelesen wird mit dem Kit-Leser `parseFrontmatter` (flache Skalare und einfache Listen); verschachtelte Werte, Blockskalare, Fortsetzungszeilen und Kommentare im Wert liest er nur teilweise, `patchFrontmatter`
 // beim Schreiben aber ganz (es ersetzte den ganzen Wert und löschte die ungelesenen Zeilen: Sicherheits-Lesung Runde 1, B1). Darum gilt je Eigenschaft: der gelesene Wert muss der ganze Wert sein, belegt durch
-// Gleichheit mit dem Wert, den Obsidians `metadataCache` für dieselbe Eigenschaft liefert (Skalar oder flache Textliste; alles andere, auch ein fehlender Cache-Eintrag, heißt „nicht flach“). Eine solche
+// Gleichheit mit dem Wert, den Obsidians `parseYaml` für denselben Block liefert (Skalar oder flache Textliste; alles andere, auch ein Block, den `parseYaml` nicht liest, heißt „nicht flach“). Der Block ist genau der des Texts, der
+// gelesen und gepatcht wird, nicht der `metadataCache`, der dem Editor um Sekunden nachläuft (Runde 2, N3). Eine solche
 // Eigenschaft wird ausgelassen (nicht an `transform` gesendet, nicht gepatcht) und in `skipped` gemeldet (nur der Name, nie der Wert). Nicht gesendet werden Werte, die ein YAML-Leser nicht als Text liest (Datum, Uhrzeit, Wahrheitswert, `null`) und leere Werte.
 //
 // Zusammensetzen: nur Eigenschaften, deren Wert sich geändert hat, gehen durch `patchFrontmatter` (zeilenweise, fremde Zeilen byte-gleich, geschrieben über `serializeFrontmatter`, das einen Wert nur
@@ -56,12 +57,24 @@ function isWholeValue(read: FmValue, cached: unknown): boolean {
   return false;
 }
 
+/** Das gelesene Objekt des Blocks, sonst `null` (kein Block, Leser wirft, Ergebnis ist kein Objekt). */
+function readCache(reader: ((yaml: string) => unknown) | Readonly<Record<string, unknown>> | null | undefined, block: string | null): Readonly<Record<string, unknown>> | null {
+  if (reader === null || reader === undefined) return null;
+  let v: unknown = reader;
+  if (typeof reader === "function") {
+    if (block === null) return null;
+    try { v = reader(block); } catch { return null; }
+  }
+  return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** `cache` ist der Frontmatter-Teil von Obsidians `metadataCache` der Notiz (`undefined`/`null` ohne Eintrag: dann ist keine Eigenschaft belegt flach). */
-export function splitNote(text: string, cache: Readonly<Record<string, unknown>> | null | undefined): NoteSplit {
+/** `reader` liest den YAML-Text des Blocks (Obsidians `parseYaml`), oder es ist schon das geparste Objekt (Tests); `undefined`/`null`, ein Wurf und alles, was kein Objekt ist, heißen: keine Eigenschaft ist belegt flach. */
+export function splitNote(text: string, reader: ((yaml: string) => unknown) | Readonly<Record<string, unknown>> | null | undefined): NoteSplit {
   const work = plain(text);
   const span = text.startsWith(BOM) ? null : locateFrontmatter(work);
+  const cache = readCache(reader, span === null ? null : span.raw);
   const fm = span === null ? { data: {} as Record<string, FmValue>, order: [] as string[] } : parseFrontmatter(work);
   const body = span === null ? work : work.slice(span.bodyFrom);
   const parts: TransformPart[] = [];

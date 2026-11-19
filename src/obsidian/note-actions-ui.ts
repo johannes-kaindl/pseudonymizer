@@ -1,4 +1,4 @@
-import { MarkdownView, SuggestModal } from "obsidian";
+import { MarkdownView, SuggestModal, parseYaml } from "obsidian";
 import type { App } from "obsidian";
 import { filterPersons, type PersonOption } from "../core/forget-plan";
 import type { CandidateKind } from "../core/transform";
@@ -94,15 +94,12 @@ export function activeNote(app: App): { path: string; name: string } | null {
 }
 
 /** Die Ports für `NoteHost` aus der Obsidian-Schicht (Fenster, Editor, Schreib-Ports des Kits). */
-export function noteHostPorts(app: App): Pick<NoteHost, "ports" | "selection" | "activeNote" | "frontmatter" | "ui"> {
+export function noteHostPorts(app: App): Pick<NoteHost, "ports" | "selection" | "activeNote" | "parseYaml" | "ui"> {
   return {
     ports: () => obsidianWritePorts(app),
     selection: () => activeSelection(app),
     activeNote: () => activeNote(app),
-    frontmatter: (path) => {
-      const file = app.vault.getFileByPath(path);
-      return file === null ? null : (app.metadataCache.getFileCache(file)?.frontmatter ?? null);
-    },
+    parseYaml: (yaml) => parseYaml(yaml) as unknown,
     ui: createNoteUi(app),
   };
 }

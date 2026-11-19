@@ -89,8 +89,8 @@ function rig(note: string, base: PlaceholderTable = sampleTable()): Rig {
     ports: () => ports,
     selection: () => state.selection,
     activeNote: () => ({ path: PATH, name: "Rückfrage" }),
-    // Ohne Vorgabe liefert der Stellvertreter des Caches die flachen Werte, wie Obsidian sie für einfache Eigenschaften liefert.
-    frontmatter: (p) => (state.cache !== undefined ? state.cache : flatCache(files.get(p) ?? "")),
+    // Ohne Vorgabe liefert der Stellvertreter von `parseYaml` die flachen Werte des Blocks, wie Obsidian sie für einfache Eigenschaften liefert.
+    parseYaml: (yaml) => (state.cache !== undefined ? state.cache : flatCache(`---\n${yaml}\n---\n`)),
     ui: {
       chooseKind: () => Promise.resolve(state.kind),
       chooseOwner: (_kind, options) => { state.ownerOptions = [...options]; state.beforeOwner(); return Promise.resolve(state.owner); },
@@ -398,6 +398,30 @@ describe("Diese Notiz pseudonymisieren: Eigenschaften, deren Wert der Kit-Leser 
     const note = `---\nfrom: Max Mustermann <max@example.org>\n---\n${BODY}`;
     const r = rig(note);
     r.state.cache = null;
+    await pseudonymizeNote(r.host);
+    expect(r.files.get(PATH)).toBe(`---\nfrom: Max Mustermann <max@example.org>\n---\nHallo ${P},\n`);
+    expect(r.notices[1]).toEqual({ key: "notice.note.skipped", args: ["from"] });
+  });
+
+  it("N3: verglichen wird gegen parseYaml auf dem Block des gelesenen Texts (der Cache läuft dem Editor nach): eine Fortsetzungszeile, die nur im Text steht, wird ausgelassen", async () => {
+    const note = `---\ntitle: Max Mustermann\n  und Erika Musterfrau\nfrom: Max Mustermann <max@example.org>\n---\n${BODY}`;
+    const r = rig(note);
+    const seen: string[] = [];
+    // Der Leser folgt dem Text, den er bekommt; ein veralteter Cache wäre `{ title: "Max Mustermann" }`.
+    r.host.parseYaml = (yaml) => {
+      seen.push(yaml);
+      return yaml.includes("und Erika") ? { title: "Max Mustermann und Erika Musterfrau", from: "Max Mustermann <max@example.org>" } : { title: "Max Mustermann", from: "Max Mustermann <max@example.org>" };
+    };
+    await pseudonymizeNote(r.host);
+    expect(seen).toEqual(["title: Max Mustermann\n  und Erika Musterfrau\nfrom: Max Mustermann <max@example.org>"]);
+    expect(r.files.get(PATH)).toBe(`---\ntitle: Max Mustermann\n  und Erika Musterfrau\nfrom: ${P} <${P}_Mail>\n---\nHallo ${P},\n`);
+    expect(r.notices[1]).toEqual({ key: "notice.note.skipped", args: ["title"] });
+  });
+
+  it("N3: wirft parseYaml, gilt keine Eigenschaft als flach: nur der Text wird geschrieben, die Notice nennt die Namen", async () => {
+    const note = `---\nfrom: Max Mustermann <max@example.org>\n---\n${BODY}`;
+    const r = rig(note);
+    r.host.parseYaml = () => { throw new Error("kaputt"); };
     await pseudonymizeNote(r.host);
     expect(r.files.get(PATH)).toBe(`---\nfrom: Max Mustermann <max@example.org>\n---\nHallo ${P},\n`);
     expect(r.notices[1]).toEqual({ key: "notice.note.skipped", args: ["from"] });

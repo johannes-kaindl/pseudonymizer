@@ -19,7 +19,7 @@ import type { PersistResult, TableChange } from "./table-store";
  *  Notiz: ein `transform` mit Prüffenster über den Text und alle Text-Eigenschaften, EIN neuer Gesamttext, EIN `swapNote` (nur wenn die Notiz inzwischen unverändert ist; kein Teilerfolg). Keine Schnappschüsse
  *  (Spec 11.1: ein Vorher-Schnappschuss läge im Klartext im Plugin-Ordner); die Umkehr ist Obsidians Rückgängig und der Dateiverlauf, und die Bestätigung sagt das. Eine Notiz mit `mail_id` gehört mailstone und
  *  wird nicht angefasst. GRENZE wie oben: scheitert das Schreiben der Notiz nach dem `transform`, bleiben dessen neue Einträge in der Tabelle.
- *  Eigenschaften, deren gelesener Wert nicht belegt der ganze Wert ist (verschachtelt, Fortsetzungszeile, Kommentar, Blockskalar; Beleg: Gleichheit mit dem `metadataCache`), werden ausgelassen und mit Namen gemeldet (B1).
+ *  Eigenschaften, deren gelesener Wert nicht belegt der ganze Wert ist (verschachtelt, Fortsetzungszeile, Kommentar, Blockskalar; Beleg: Gleichheit mit `parseYaml` auf dem Block des gelesenen Texts), werden ausgelassen und mit Namen gemeldet (B1).
  *  Kein Klartext in einer Notice oder `console`: Meldungen nennen höchstens Platzhalter und Zahlen. */
 
 /** Die Auswahl im Editor, wie der Befehl sie festhält, bevor er etwas fragt: Pfad, Spanne (Zeichen im Text des Editors) und der gewählte Text. */
@@ -47,8 +47,8 @@ export interface NoteHost {
   selection(): SelectionInfo | null;
   /** Die aktive Markdown-Notiz; `null` ohne. */
   activeNote(): { path: string; name: string } | null;
-  /** Der Frontmatter-Teil von Obsidians `metadataCache` für die Notiz (`null` ohne Eintrag). Belegt, welche Eigenschaften der Kit-Leser ganz liest (B1). */
-  frontmatter(path: string): Readonly<Record<string, unknown>> | null;
+  /** Obsidians `parseYaml` auf den Frontmatter-Block des Texts, der gelesen und gepatcht wird (nicht der `metadataCache`, der nachläuft, N3). Belegt, welche Eigenschaften der Kit-Leser ganz liest (B1). Darf werfen. */
+  parseYaml(yaml: string): unknown;
   ui: NoteUi;
   changed(): void;
   /** Zufallsbytes für neue Kennungen; Vorgabe `crypto.getRandomValues`. Nur für Tests austauschbar. */
@@ -159,7 +159,7 @@ export async function pseudonymizeNote(h: NoteHost): Promise<void> {
     const ports = h.ports();
     // Der Stand, gegen den getauscht wird, kommt aus derselben Quelle, über die geschrieben wird (offener Editor zuerst).
     const before = await readNoteText(ports, note.path);
-    const split = splitNote(before, h.frontmatter(note.path));
+    const split = splitNote(before, (yaml) => h.parseYaml(yaml));
     const skippedNote = (): void => { if (split.skipped.length > 0) h.ui.notify("notice.note.skipped", split.skipped.join(", ")); };
     if (split.mailNote) { h.ui.notify("notice.note.mailstone"); return; }
     if (split.parts.length === 0) { h.ui.notify("notice.note.empty"); skippedNote(); return; }

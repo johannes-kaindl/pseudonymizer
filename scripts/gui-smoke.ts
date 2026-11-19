@@ -88,7 +88,7 @@ const PUNKTE = [
   "NA4 Der Eigenschaften-Bereich zeigt den Wert von from und den Listeneintrag von cc zeichengleich zur Datei",
   "NA5 Diese Notiz pseudonymisieren, im Prüffenster abgebrochen: die Notiz ist byte-gleich, die Notice nennt den Abbruch ohne Klartext",
   "NA6 Eine Notiz mit mail_id bleibt unberührt, es öffnet kein Prüffenster, die Notice verweist auf mailstone",
-  "NA7 Eigenschaften, die der Kit-Leser nicht ganz liest (Fortsetzungszeile, Liste von Abbildungen, Kommentar im Wert): der metadataCache von Obsidian liefert für die flachen Werte genau den gelesenen Wert und für die anderen etwas anderes, der Befehl lässt diese byte-gleich und meldet ihre Namen, Frontmatter-Zeilen gehen nicht verloren, der Rest wird pseudonymisiert",
+  "NA7 Eigenschaften, die der Kit-Leser nicht ganz liest (Fortsetzungszeile, Liste von Abbildungen, Kommentar im Wert): parseYaml auf dem Block liefert für die flachen Werte genau den gelesenen Wert und für die anderen etwas anderes, der Befehl lässt diese byte-gleich und meldet ihre Namen, Frontmatter-Zeilen gehen nicht verloren, der Rest wird pseudonymisiert",
   "AP1 Reiter Personen: die Suche (echte Eingabe) findet über Mail, Telefon in anderer Schreibweise, Namensteil und Großschreibung; ein Treffer ohne Ergebnis sagt es in Worten",
   "AP2 Reiter Personen, Detail: ein Eintrag klappt auf (aria-expanded), zeigt jeden Wert mit Feld, Klartext und Platzhalter, je Wert „Wert abhängen“, darunter Zusammenführen und Vergessen (mod-warning); kein Klartext in einem aria-label",
   "AP3 Zusammenführen aus dem Reiter: Partnerwahl, Bestätigung (nicht zerstörend), danach lösen beide Platzhalter-IDs weiter auf, die Ansicht zeigt einen Eintrag mit dem Hinweis auf beide Kennungen, die Gerätedatei auf der Platte trägt beide Namen",
@@ -1724,8 +1724,9 @@ async function main(): Promise<void> {
     await clearNotices(cdp);
     await cdp.evaluate(SCHLIESSE_NOTIZEN);
 
-    // NA7 (Sicherheits-Lesung Runde 1, B1): Eigenschaften, deren Wert der Kit-Leser nicht ganz liest, bleiben unberührt. Geschrieben, noch nicht gelaufen (Rechner unter Last).
-    // Gemessen wird die Annahme, auf der der Schutz ruht: der `metadataCache` liefert für einen flachen Wert denselben Text wie der Kit-Leser, für die drei Formen etwas anderes.
+    // NA7 (Sicherheits-Lesung Runde 1, B1; Quelle seit Runde 2, N3): Eigenschaften, deren Wert der Kit-Leser nicht ganz liest, bleiben unberührt. Im Lauf vom 2026-11-19 mit dem `metadataCache` gemessen; seit N3 liest das Plugin
+    // `parseYaml` auf dem Block des gelesenen Texts, der Punkt misst jetzt dieselbe Quelle (Block aus der Datei, `require("obsidian").parseYaml` im Fenster). Umgestellt, noch nicht wieder gelaufen.
+    // Gemessen wird die Annahme, auf der der Schutz ruht: `parseYaml` liefert für einen flachen Wert denselben Text wie der Kit-Leser, für die drei Formen etwas anderes.
     const NA7 = "Smoke-Eigenschaften.md";
     const NA7_NOTIZ = [
       "---", "from: Berta Beispiel <berta@example.org>", "title: Berta Beispiel", "  und Erika Musterfrau", "people:", "  - name: Berta Beispiel", "    role: Kassenwart", "  - Erika",
@@ -1734,8 +1735,10 @@ async function main(): Promise<void> {
     await cdp.evaluate(LEGE_NOTIZ_AN(NA7, NA7_NOTIZ));
     const na7offen = await oeffneNotiz(cdp, NA7, "preview", 0);
     const na7cache = na7offen ? await pollUntil<{ from: unknown; title: unknown; people: unknown; author: unknown }>(cdp, `
-      const f = app.vault.getAbstractFileByPath(${q(NA7)}); const c = f ? app.metadataCache.getFileCache(f) : null;
-      return c && c.frontmatter ? { from: c.frontmatter.from, title: c.frontmatter.title, people: c.frontmatter.people, author: c.frontmatter.author } : null;
+      const f = app.vault.getAbstractFileByPath(${q(NA7)}); if (!f) return null;
+      const m = /^---\n([\s\S]*?)\n---\n/.exec(await app.vault.read(f)); if (!m) return null;
+      const y = require("obsidian").parseYaml(m[1]);
+      return y ? { from: y.from, title: y.title, people: y.people, author: y.author } : null;
     `, 8000, 200) : null;
     await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:pseudonymize-note`)}); return true;`);
     // Nach NA3 kennt die Tabelle Berta und ihre Adresse: gibt es nichts Neues zu fragen, schreibt der Befehl ohne Prüffenster; kommt eines, wird es bestätigt.
@@ -1745,7 +1748,7 @@ async function main(): Promise<void> {
     const na7notice = na7text !== null ? await pollUntil<string>(cdp, NOTICE_MIT("left unchanged"), 5000, 200) : null;
     const na7zeilen = ["title: Berta Beispiel", "  und Erika Musterfrau", "people:", "  - name: Berta Beispiel", "    role: Kassenwart", "  - Erika", "author: Berta Beispiel # Chefin"];
     const na7behalten = na7text !== null && na7zeilen.every((z) => (na7text as string).split("\n").includes(z));
-    record("NA7 Eigenschaften, die der Kit-Leser nicht ganz liest (Fortsetzungszeile, Liste von Abbildungen, Kommentar im Wert): der metadataCache von Obsidian liefert für die flachen Werte genau den gelesenen Wert und für die anderen etwas anderes, der Befehl lässt diese byte-gleich und meldet ihre Namen, Frontmatter-Zeilen gehen nicht verloren, der Rest wird pseudonymisiert",
+    record("NA7 Eigenschaften, die der Kit-Leser nicht ganz liest (Fortsetzungszeile, Liste von Abbildungen, Kommentar im Wert): parseYaml auf dem Block liefert für die flachen Werte genau den gelesenen Wert und für die anderen etwas anderes, der Befehl lässt diese byte-gleich und meldet ihre Namen, Frontmatter-Zeilen gehen nicht verloren, der Rest wird pseudonymisiert",
       Boolean(na7cache) && na7cache!.from === "Berta Beispiel <berta@example.org>" && na7cache!.title !== "Berta Beispiel" && JSON.stringify(na7cache!.people) !== JSON.stringify(["Berta Beispiel", "Erika"])
         && na7cache!.author !== "Berta Beispiel # Chefin" && na7text !== null && na7behalten && !/^from: Berta/m.test(na7text as string) && !/\nHallo Berta Beispiel/.test(na7text as string)
         && na7notice !== null && /title/.test(na7notice) && /people/.test(na7notice) && !/Berta|Erika/.test(na7notice),
