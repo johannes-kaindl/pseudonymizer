@@ -4,7 +4,7 @@
       "ref": "0.99.1"
     },
     "code-kit": {
-      "ref": "0.81.0"
+      "ref": "0.82.0"
     }
   },
   "targets": [
@@ -13,7 +13,11 @@
       "source": "code-kit",
       "from": "src/ts/pure",
       "modules": [
+        "fold-case",
         "i18n",
+        "phone",
+        "placeholder",
+        "placeholder-table",
         "recovery-code",
         "rel-path",
         "secrets"

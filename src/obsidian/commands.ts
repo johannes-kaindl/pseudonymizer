@@ -1,16 +1,20 @@
 import { MarkdownView, Notice } from "obsidian";
 import type { App, Command, Plugin } from "obsidian";
 import { COMMANDS, commandGate, type CommandGate, type CommandId, type CommandSpec, type ViewTab } from "../core/commands";
+import type { MemoryTable } from "../core/memory-table";
 import type { PseudonymizerSettings } from "../core/settings";
 import type { PluginState } from "../core/status";
 import { t } from "../vendor/kit/i18n";
 import type { DeviceState } from "./device";
+import { lookupPlaceholderCommand, searchPlaintextCommand } from "./lookup-commands";
 
 /** Was die Befehle vom Plugin brauchen (`PseudonymizerPlugin` erfüllt es). */
 export interface CommandHost {
   app: App;
   settings: PseudonymizerSettings;
   device: DeviceState;
+  /** Die Tabelle im Arbeitsspeicher (Nachschlagen und Suchen lesen sie). */
+  memory: MemoryTable;
   state(): PluginState;
   openView(tab?: ViewTab): Promise<void>;
   /** Sagt Statusleiste und Ansicht, dass sich etwas geändert hat. */
@@ -25,8 +29,8 @@ const HANDLERS: Record<CommandId, (host: CommandHost) => void> = {
   "open-view": (h) => { void h.openView(); },
   "pseudonymize-selection": notAvailable,
   "pseudonymize-note": notAvailable,
-  "search-plaintext": notAvailable,
-  "lookup-placeholder": notAvailable,
+  "search-plaintext": (h) => { void searchPlaintextCommand(h); },
+  "lookup-placeholder": (h) => { void lookupPlaceholderCommand(h); },
   "copy-plaintext": notAvailable,
   "copy-placeholders": notAvailable,
   "forget-person": notAvailable,

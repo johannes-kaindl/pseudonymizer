@@ -5,13 +5,14 @@ import type { Engine } from "./core/engine";
 import type { PluginState } from "./core/status";
 import type { CommandId, ViewTab } from "./core/commands";
 import { VIEW_TYPE_PSEUDONYMIZER } from "./core/commands";
+import { MemoryTable } from "./core/memory-table";
 import { loadSettings, type PseudonymizerSettings } from "./core/settings";
 import { pickLang, setLang } from "./vendor/kit/i18n";
 import type { PseudonymizerApi } from "./vendor/kit/pseudonymizer-source";
+import { PseudonymizerEngine } from "./obsidian/engine";
 import { registerCommands, runCommand } from "./obsidian/commands";
 import { createDeviceState, type DeviceState } from "./obsidian/device";
 import { createPluginStatusBar, type PluginStatusBar } from "./obsidian/status-bar";
-import { StubEngine } from "./obsidian/stub-engine";
 import { PseudonymizerView } from "./obsidian/view";
 import { PseudonymizerSettingTab } from "./obsidian/settings-tab";
 
@@ -24,8 +25,10 @@ export default class PseudonymizerPlugin extends Plugin {
   device!: DeviceState;
   /** Öffentliche Plugin-API v1 (`app.plugins.plugins.pseudonymizer.api`). */
   api!: PseudonymizerApi;
-  /** Die Maschine hinter der API; bis zu den Aufgaben 9 und 11 die Platzhalter-Engine. */
-  engine: Engine = new StubEngine();
+  /** Die Tabelle im Arbeitsspeicher; die Gerätedateien füllen sie ab Aufgabe 11, bis dahin bleibt sie leer (`not-set-up`). */
+  readonly memory = new MemoryTable();
+  /** Die Maschine hinter der API (Aufgabe 9: zurücksetzen und erkennen; Aufgabe 11 öffnet und schreibt, Aufgabe 13 pseudonymisiert). */
+  engine: Engine = new PseudonymizerEngine(this.memory);
   private statusBar: PluginStatusBar | null = null;
   private readonly changeListeners = new Set<() => void>();
 

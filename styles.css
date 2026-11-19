@@ -137,6 +137,15 @@
 /* Tippfläche am Telefon (UI-STANDARD). */
 .is-mobile .pseu-code-confirm, .is-mobile .pseu-code-copy { min-height: var(--size-4-12); }
 
+/* Platzhalter nachschlagen: Status als Symbol und Text, Platzhalter und Werte brechen um statt abzuschneiden. */
+.pseu-lookup-status { display: flex; align-items: center; gap: var(--size-4-2); margin-bottom: var(--size-4-3); font-weight: var(--font-semibold); }
+.pseu-lookup-status-icon { display: inline-flex; }
+.pseu-lookup-rows { margin: 0 0 var(--size-4-3); }
+.pseu-lookup-rows dt { color: var(--text-muted); font-size: var(--font-ui-small); }
+.pseu-lookup-rows dd { margin: 0 0 var(--size-4-2); overflow-wrap: anywhere; }
+.pseu-lookup-placeholder, .pseu-lookup-form-placeholder { font-family: var(--font-monospace); }
+.pseu-lookup-forms { margin: 0; padding-inline-start: var(--size-4-5); overflow-wrap: anywhere; }
+
 /* Kit: prompt-text (obsidian-kit 0.99.1) */
 /* Ein Feld füllt die Zeile: eine Adresse oder ein Kommentar ist lang, und ein Feld von Standardbreite schnitt den Platzhalter ab (anysource-sideloader, asl-url-field). */
 .okit-prompt-field { display: block; width: 100%; box-sizing: border-box; }

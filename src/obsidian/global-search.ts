@@ -1,0 +1,19 @@
+import type { App } from "obsidian";
+
+/** Der Zugriff auf Obsidians eingebaute Suche (Kernplugin `global-search`). Die Schnittstelle ist nicht öffentlich dokumentiert, deshalb steht der Zugriff allein hier,
+ *  trägt jeden Schritt als Möglichkeit und meldet ein Fehlen als `false`, nie als Ausnahme. Sie ist auch ausgeschaltet, wenn der Nutzer das Kernplugin abgeschaltet hat. */
+interface GlobalSearchLike { openGlobalSearch?: (query: string) => void }
+interface InternalPluginsLike { getPluginById?: (id: string) => { instance?: GlobalSearchLike } | null | undefined }
+
+/** Öffnet die Suche mit `query`. `false`, wenn Obsidian den Zugriff nicht (mehr) bietet oder er scheitert; der Aufrufer sagt es dann in einer Notice. */
+export function openGlobalSearch(app: App, query: string): boolean {
+  try {
+    const internal = (app as unknown as { internalPlugins?: InternalPluginsLike }).internalPlugins;
+    const instance = internal?.getPluginById?.("global-search")?.instance;
+    if (typeof instance?.openGlobalSearch !== "function") return false;
+    instance.openGlobalSearch(query);
+    return true;
+  } catch {
+    return false;
+  }
+}

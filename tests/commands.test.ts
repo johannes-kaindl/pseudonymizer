@@ -6,6 +6,7 @@ import type { PluginState } from "../src/core/status";
 import { STRINGS } from "../src/i18n/strings";
 import "../src/i18n/strings";
 import { setLang } from "../src/vendor/kit/i18n";
+import { MemoryTable } from "../src/core/memory-table";
 import { registerCommands, runCommand, type CommandHost } from "../src/obsidian/commands";
 
 const IDS: CommandId[] = [
@@ -105,6 +106,7 @@ function makeHost(state: PluginState = "ready", over: { copyMode?: "placeholder"
     app: { workspace: { getActiveViewOfType: () => (over.editor ? { editor: {} } : null) } } as unknown as CommandHost["app"],
     settings,
     device: { get showPlaintext() { return shown; }, setShowPlaintext: (on: boolean) => { shown = on; store.set("x", on); }, deviceName: "d", setDeviceName: () => undefined },
+    memory: new MemoryTable(),
     state: () => state,
     openView: (tab) => { opened.push(tab); return Promise.resolve(); },
     emitChange: () => { changes++; },
@@ -171,10 +173,22 @@ describe("registerCommands", () => {
   it("a command whose function is missing shows the 'not available yet' notice", () => {
     const { host, plugin, added } = makeHost("ready", { editor: true });
     registerCommands(plugin, host);
-    for (const id of ["pseudonymize-selection", "pseudonymize-note", "search-plaintext", "lookup-placeholder", "copy-plaintext", "forget-person", "show-recovery-code", "enter-recovery-code", "replace-key", "set-up"]) {
+    for (const id of ["pseudonymize-selection", "pseudonymize-note", "copy-plaintext", "forget-person", "show-recovery-code", "enter-recovery-code", "replace-key", "set-up"]) {
       Notice.instances.length = 0;
       added.find((c) => c.id === id)!.checkCallback?.(false);
       expect(lastNotice(), id).toBe(STRINGS.en["notice.notAvailable"]);
+    }
+  });
+
+  it("lookup-placeholder and search-plaintext are wired to their functions, not to the 'not available yet' notice", async () => {
+    const { host, plugin, added } = makeHost("ready", { editor: true });
+    registerCommands(plugin, host);
+    for (const id of ["lookup-placeholder", "search-plaintext"]) {
+      Notice.instances.length = 0;
+      added.find((c) => c.id === id)!.checkCallback?.(false);
+      await new Promise((r) => setTimeout(r, 0));
+      // the memory of the fake host holds no table: the functions themselves say so
+      expect(lastNotice(), id).toBe(STRINGS.en["notice.notSetUp"]);
     }
   });
 
