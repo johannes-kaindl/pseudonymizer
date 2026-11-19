@@ -30,6 +30,7 @@ const rows: Row[] = [
   { name: "key, files of the own chain, none opened", input: { hasKey: true, deviceFiles: 1, readableHeads: 1, ownChainMatches: true }, state: "locked", reason: "key-opens-nothing" },
   { name: "at least one file opened", input: { hasKey: true, deviceFiles: 3, readableHeads: 2, openedFiles: 1, ownChainMatches: true }, state: "ready", reason: null },
   { name: "opened files win over a foreign chain flag of other files", input: { hasKey: true, deviceFiles: 2, readableHeads: 2, openedFiles: 1, ownChainMatches: false }, state: "ready", reason: null },
+  { name: "a closing file of the own chain: locked, whatever else opened", input: { hasKey: true, deviceFiles: 2, readableHeads: 2, openedFiles: 1, ownChainMatches: true, chainReplaced: true }, state: "locked", reason: "key-replaced" },
   { name: "storage error beats not set up", input: { storageError: true }, state: "locked", reason: "storage-failed" },
   { name: "storage error beats ready", input: { storageError: true, hasKey: true, deviceFiles: 1, readableHeads: 1, openedFiles: 1, ownChainMatches: true }, state: "locked", reason: "storage-failed" },
   { name: "storage error beats a corrupt key", input: { storageError: true, keyCorrupt: true }, state: "locked", reason: "storage-failed" },
@@ -42,7 +43,7 @@ describe("deriveStatus", () => {
 
   it("covers every lock reason at least once", () => {
     const seen = new Set(rows.map((r) => r.reason));
-    for (const r of ["no-key", "key-opens-nothing", "table-missing", "foreign-chain", "unreadable", "key-corrupt", "storage-failed"] as const) {
+    for (const r of ["no-key", "key-opens-nothing", "table-missing", "foreign-chain", "unreadable", "key-corrupt", "storage-failed", "key-replaced"] as const) {
       expect(seen.has(r)).toBe(true);
     }
   });

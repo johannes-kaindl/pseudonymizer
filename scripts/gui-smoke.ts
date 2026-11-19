@@ -22,7 +22,7 @@ import { createBilanz, parseArgs, runDriver } from "../../tools/obsidian-cdp/bil
 import { Cdp, attachTo, beimAbbruch, bereiteInstanzVor, clearNotices, clickReal, istAbgebrochen, notices, pollUntil, requireVisible, schliesseDialog } from "../../tools/obsidian-cdp/cdp.js";
 import { istZerstoerendJs } from "../../tools/obsidian-cdp/knoepfe.js";
 import { buildVault, requireEigenerBuild, stagingVaultDir } from "../../tools/obsidian-cdp/vault.js";
-import { decodePayload, encodePayload } from "../src/core/payload.js";
+import { closingDeviceId, decodeClosing, decodePayload, encodePayload } from "../src/core/payload.js";
 import { openEnvelope, readEnvelopeHeader, sealEnvelope } from "../src/vendor/kit/key-envelope.js";
 import { encryptionKey, type ChainState } from "../src/vendor/kit/key-ratchet.js";
 import { emptyTable, serializeTable, tableAddEntry, tableAddValue, type PlaceholderTable } from "../src/vendor/kit/placeholder-table.js";
@@ -53,7 +53,7 @@ const PUNKTE = [
   "L Schlüssel gelöscht: Zustand locked (no-key), Reiter nennt den Ausweg, restore liefert locked",
   "K Code-Eingabe: ein falsches Prüfzeichen speichert nichts und nennt den Grund; der richtige Code macht das Gerät wieder ready",
   "H Einrichten mit vorhandenen Dateien: Abbrechen ändert nichts, „Trotzdem einrichten“ führt zu ready mit neuer Kette, die alte eigene Datei liegt beiseite",
-  "X Schlüssel ersetzen: Bestätigung, neuer Code mit Kontrollkästchen, danach ready mit neuer Kette (Stand 0), gezeigter Code = gespeicherter Schlüssel, alter Platzhalter löst weiter auf",
+  "X Schlüssel ersetzen: Bestätigung, neuer Code mit Kontrollkästchen, danach ready mit neuer Kette (Stand 0), gezeigter Code = gespeicherter Schlüssel, alter Platzhalter löst weiter auf, die Abschlussdatei der alten Kette sperrt ein Gerät mit dem alten Schlüssel und steht nicht in der Geräteliste",
   "Z Person vergessen: Wahl, Warndialog mit Werten und Grenzen, danach nennt restore den Platzhalter in forgotten, Stand n+1, die Gerätedatei auf der Platte trägt keinen Klartext der Person",
   "D Gerät entfernen: Knopf im Reiter, Warnung bei nicht lesbarer Fassung, danach ist die fremde Datei weg und die eigene bleibt",
 ] as const;
@@ -206,6 +206,22 @@ async function oeffneEigeneDatei(basePath: string, eigeneId: string, k: Schluess
   const p = decodePayload(o.plaintext);
   if ("error" in p || typeof p.table !== "string") return null;
   return { stand: h.header.stand, chainId, tabelle: p.table };
+}
+
+/** Die Abschlussdatei der alten Kette (Spec 8.3): mit dem ALTEN Schlüssel geöffnet, wie es ein Gerät mit dem alten Schlüssel tut; `gesperrt` heißt, sie trägt die Markierung „ersetzt“ (und sonst nichts: der Inhalt ist genau die Markierung). */
+async function oeffneAbschlussdatei(basePath: string, eigeneId: string, alt: SchluesselInhalt): Promise<{ vorhanden: boolean; gesperrt: boolean; nurMarkierung: boolean }> {
+  const kette = alt.chainId.map((b) => b.toString(16).padStart(2, "0")).join("");
+  const pfad = join(basePath, ORDNER, `${closingDeviceId(eigeneId, kette)}.pseudo`);
+  if (!existsSync(pfad)) return { vorhanden: false, gesperrt: false, nurMarkierung: false };
+  const bytes = Uint8Array.from(readFileSync(pfad));
+  const h = readEnvelopeHeader(bytes);
+  if (!h.ok || h.header.stand !== alt.stand) return { vorhanden: true, gesperrt: false, nurMarkierung: false };
+  const key = await encryptionKey({ chainId: Uint8Array.from(alt.chainId), stand: alt.stand, chainKey: Uint8Array.from(alt.key) });
+  if (!key.ok) return { vorhanden: true, gesperrt: false, nurMarkierung: false };
+  const o = await openEnvelope(key.value, bytes);
+  if (!o.ok) return { vorhanden: true, gesperrt: false, nurMarkierung: false };
+  const c = decodeClosing(o.plaintext);
+  return { vorhanden: true, gesperrt: "closed" in c, nurMarkierung: new TextDecoder().decode(o.plaintext) === '{"format":"pseudonymizer-closed","version":1,"replaced":true}' };
 }
 
 function setup(): void {
@@ -533,12 +549,16 @@ async function main(): Promise<void> {
     const dateiX = neuX && eigeneId ? await oeffneEigeneDatei(info.basePath, eigeneId, neuX) : null;
     const nochDa = await cdp.evaluate<unknown>(`const p = ${P}; return p ? p.api.restore(${q(`Hallo ${FREMD_PLATZHALTER} und Person_${FREMD2_ID}`)}, { caller: "gui-smoke" }) : null;`);
     const fremdZeile = await cdp.evaluate<string | null>(`const p = ${P}; if (!p) return null; const r = p.devicesModel().rows.find((x) => !x.own); return r ? r.status : "keine Zeile";`);
-    record("X Schlüssel ersetzen: Bestätigung, neuer Code mit Kontrollkästchen, danach ready mit neuer Kette (Stand 0), gezeigter Code = gespeicherter Schlüssel, alter Platzhalter löst weiter auf",
+    const abschluss = vorX && eigeneId ? await oeffneAbschlussdatei(info.basePath, eigeneId, vorX) : null;
+    const zeilenIds = await cdp.evaluate<string[]>(`const p = ${P}; return p ? p.devicesModel().rows.map((x) => x.deviceId) : [];`);
+    const abschlussKeineZeile = zeilenIds.length > 0 && zeilenIds.every((id) => !id.startsWith("closed-"));
+    record("X Schlüssel ersetzen: Bestätigung, neuer Code mit Kontrollkästchen, danach ready mit neuer Kette (Stand 0), gezeigter Code = gespeicherter Schlüssel, alter Platzhalter löst weiter auf, die Abschlussdatei der alten Kette sperrt ein Gerät mit dem alten Schlüssel und steht nicht in der Geräteliste",
       Boolean(personenDa) && xFrageOk && xBestaetigt && Boolean(xCode) && xWeiterVorher === true
         && keinSchluesselWechselVorHaken !== null && q(keinSchluesselWechselVorHaken.chainId) === q(vorX?.chainId ?? []) && neuX !== null && neuX.stand === 0 && codeGleichX
         && dateiX !== null && dateiX.stand === 0 && neuX !== null && dateiX.chainId === neuX.chainId.map((b) => b.toString(16).padStart(2, "0")).join("")
-        && (nochDa as { text?: string } | null)?.text === "Hallo Max Mustermann und Berta Beispiel" && fremdZeile === "not-opened",
-      `Personen da=${Boolean(personenDa)}, Frage=${q(xFrage ? xFrage.titel : null)}, bestätigt=${xBestaetigt}, Code gezeigt=${Boolean(xCode)}, Schlüssel vor dem Kontrollkästchen unverändert=${keinSchluesselWechselVorHaken !== null && q(keinSchluesselWechselVorHaken.chainId) === q(vorX?.chainId ?? [])}, Weiter gesperrt vorher=${xWeiterVorher}, neuer Schlüssel Stand=${neuX?.stand ?? null}, Code = Schlüssel: ${codeGleichX}, Datei=${q(dateiX ? { stand: dateiX.stand, kette: dateiX.chainId } : null)}, restore=${q(nochDa)}, fremde Zeile=${q(fremdZeile)}`);
+        && (nochDa as { text?: string } | null)?.text === "Hallo Max Mustermann und Berta Beispiel" && fremdZeile === "not-opened"
+        && abschluss !== null && abschluss.vorhanden && abschluss.gesperrt && abschluss.nurMarkierung && abschlussKeineZeile,
+      `Personen da=${Boolean(personenDa)}, Frage=${q(xFrage ? xFrage.titel : null)}, bestätigt=${xBestaetigt}, Code gezeigt=${Boolean(xCode)}, Schlüssel vor dem Kontrollkästchen unverändert=${keinSchluesselWechselVorHaken !== null && q(keinSchluesselWechselVorHaken.chainId) === q(vorX?.chainId ?? [])}, Weiter gesperrt vorher=${xWeiterVorher}, neuer Schlüssel Stand=${neuX?.stand ?? null}, Code = Schlüssel: ${codeGleichX}, Datei=${q(dateiX ? { stand: dateiX.stand, kette: dateiX.chainId } : null)}, restore=${q(nochDa)}, fremde Zeile=${q(fremdZeile)}, Abschlussdatei (mit altem Schlüssel geöffnet)=${q(abschluss)}, Zeilen=${q(zeilenIds.length)} ohne Abschlussdatei=${abschlussKeineZeile}`);
     await clearNotices(cdp);
 
     // --- Z ---

@@ -154,9 +154,12 @@ export default class PseudonymizerPlugin extends Plugin {
       return;
     }
     this.deviceId = deviceId;
-    const files = createDeviceFiles({ folder: this.settings.folder, extension: DEVICE_FILE_EXTENSION, deviceId, ports: defaultDeviceFilePorts(this.app) });
+    const ports = defaultDeviceFilePorts(this.app);
+    const folder = this.settings.folder;
+    const files = createDeviceFiles({ folder, extension: DEVICE_FILE_EXTENSION, deviceId, ports });
     const store = createTableStore({
       files,
+      closingFiles: (id) => createDeviceFiles({ folder, extension: DEVICE_FILE_EXTENSION, deviceId: id, ports }),
       keys: this.keys,
       memory: this.memory,
       deviceName: () => this.device.deviceName,

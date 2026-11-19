@@ -30,7 +30,7 @@ const EMPTY_KEY: Record<Exclude<ViewTab, "devices">, string> = {
   exceptions: "view.empty.exceptions",
 };
 
-const LOCK_REASONS: readonly LockReason[] = ["no-key", "table-missing", "foreign-chain", "key-opens-nothing", "unreadable", "key-corrupt", "storage-failed"];
+const LOCK_REASONS: readonly LockReason[] = ["no-key", "table-missing", "foreign-chain", "key-opens-nothing", "unreadable", "key-corrupt", "storage-failed", "key-replaced"];
 
 /** Ein Reiter: Zustand oben als Status-Indikator, darunter der Inhalt. „Geräte und Schlüssel“ ist seit Aufgabe 12 gefüllt, Personen und Ausnahmen zeigen bis Aufgabe 15 und 18 einen Leerzustand. */
 class TabPanel implements HubPanel<ViewTab> {

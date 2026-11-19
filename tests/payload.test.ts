@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodePayload, encodePayload, type DevicePayload } from "../src/core/payload";
+import { closingDeviceId, decodeClosing, decodePayload, encodeClosing, encodePayload, isClosingId, type DevicePayload } from "../src/core/payload";
 
 const sample = (over: Partial<DevicePayload> = {}): DevicePayload => ({
   format: "pseudonymizer-device",
@@ -100,5 +100,32 @@ describe("encodePayload / decodePayload", () => {
   it("errors carry a code only, never the content", () => {
     const r = decodePayload(enc({ ...sample({ device: { name: "Max Mustermann", codeShownAtStand: null } }), version: 2 }));
     expect(JSON.stringify(r)).not.toContain("Mustermann");
+  });
+});
+
+describe("Abschlussdatei einer ersetzten Kette", () => {
+  it("round trip: nur die Markierung, kein Feld für Tabelle, Werte oder Namen", () => {
+    expect(decodeClosing(encodeClosing())).toEqual({ closed: true });
+    expect(JSON.parse(text(encodeClosing()))).toEqual({ format: "pseudonymizer-closed", version: 1, replaced: true });
+  });
+  it("(g) ein Leser, der die Markierung nicht kennt, wertet sie nie als leere Tabelle: decodePayload meldet einen Fehler", () => {
+    const r = decodePayload(encodeClosing());
+    expect("error" in r).toBe(true);
+    expect("table" in r).toBe(false);
+  });
+  it("ein Geräteinhalt ist keine Abschlussdatei, eine neuere Fassung und eine unvollständige Markierung auch nicht", () => {
+    expect(decodeClosing(encodePayload(sample()))).toEqual({ error: "format" });
+    expect(decodeClosing(enc({ format: "pseudonymizer-closed", version: 2, replaced: true }))).toEqual({ error: "version" });
+    expect(decodeClosing(enc({ format: "pseudonymizer-closed", version: 1, replaced: false }))).toEqual({ error: "format" });
+    expect(decodeClosing(enc({ format: "pseudonymizer-closed", version: 1 }))).toEqual({ error: "format" });
+    expect(decodeClosing(new TextEncoder().encode("{kaputt"))).toEqual({ error: "json" });
+  });
+  it("der Dateiname trägt Gerät und Kette; nur solche Namen gelten als Abschlussdatei", () => {
+    const id = closingDeviceId("dev-a", "c0de0101");
+    expect(id).toBe("closed-dev-a-c0de0101");
+    expect(isClosingId(id)).toBe(true);
+    expect(isClosingId("dev-a")).toBe(false);
+    expect(isClosingId("k3x9m2ab7q")).toBe(false);
+    expect(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(closingDeviceId("x".repeat(64), "c0de0101"))).toBe(true);
   });
 });

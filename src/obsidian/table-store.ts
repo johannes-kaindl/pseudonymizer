@@ -20,6 +20,10 @@
 // 7. **Alles oder nichts** (Spec 8.7, Review-Fokus 5): Die Änderung eines `persist` kommt erst in den Arbeitsspeicher, wenn die Datei geschrieben ist. Was nur gelesen wurde, ist schon vorher drin.
 // 8. **Nie zweimal unter demselben Stand** (Spec 8.3 Regel 2, `mustAdvanceBeforeWrite`): Trägt die zu schreibende Fassung eine Vergessen-Marke für eine ID, die dieses Gerät unter diesem Stand schon lebend
 //    geschrieben hat, wird vor dem Schreiben um einen Stand weitergedreht. Das gilt für gelesene Marken (`refresh`) genauso wie für eine, die ein `persist` selbst mitbringt.
+// 10. **Schlüssel ersetzen sperrt die anderen Geräte** (Spec 8.3). Vor der neuen Fassung legt das ersetzende Gerät unter der ALTEN Kette und ihrem höchsten gelesenen Stand eine Abschlussdatei ab
+//    (`closed-<Gerät>-<Kette>`, Inhalt nur „ersetzt“, `core/payload.ts`). Ein Gerät, das sie mit seinem Schlüssel öffnet, sperrt sich (`key-replaced`) und schreibt nichts mehr. Die Abschlussdatei kommt
+//    vor der neuen Fassung, weil ein Erfolg kein Gerät ungesperrt lassen darf; scheitert danach die neue Fassung, nimmt das Gerät sie zurück, damit kein Abbruch ein Gerät grundlos sperrt.
+//    Sie ist kein Gerät (Geräteliste, Befunde, „Gerät entfernen“). Das ersetzende Gerät räumt sie weg, sobald keine andere Datei der alten Kette mehr im Ordner liegt.
 // 9. **Der alte Kettenzustand wird geleert** (`wipe`), sobald der neue im Schlüsselbund steht. Jeder Zustand, den ein Lauf ableitet, wird am Ende des Laufs geleert, auch bei einem Fehler.
 //
 // Kein Klartext in Meldungen: `FileProblem` trägt Art, Geräte-ID und Dateipfad (der Name der Datei ist die Geräte-ID), nie Inhalt, Namen oder Schlüsselmaterial.
@@ -46,7 +50,7 @@ import {
   type PlaceholderTable,
 } from "../vendor/kit/placeholder-table";
 import type { MemoryTable } from "../core/memory-table";
-import { decodePayload, encodePayload, type DevicePayload, type PlaceholderLanguage } from "../core/payload";
+import { closingDeviceId, decodeClosing, decodePayload, encodeClosing, encodePayload, isClosingId, type DevicePayload, type PlaceholderLanguage } from "../core/payload";
 import { classifyFile, codeStandOf, mustAdvanceBeforeWrite, type DeviceView, type FileHead, type WrittenAtStand } from "../core/protocol";
 import { deriveStatus, type LockReason } from "../core/status";
 import type { KeyStore } from "./key-store";
@@ -82,6 +86,8 @@ const DEFAULT_RATCHET: RatchetPort = { advance, advanceTo, encryptionKey, wipe, 
 
 export interface TableStoreOptions {
   files: DeviceFiles;
+  /** Die Ablage unter einer anderen Geräte-ID: Schlüssel ersetzen legt damit die Abschlussdatei der alten Kette ab (eigener Dateiname, gleiche Ports wie `files`). */
+  closingFiles(deviceId: string): DeviceFiles;
   keys: KeyStore;
   memory: MemoryTable;
   /** Name dieses Geräts für „Geräte und Schlüssel“; geht bei jedem Schreiben in die Gerätedatei. */
@@ -115,7 +121,7 @@ export type ReplaceKeyResult = { ok: true } | { ok: false; reason: "locked" | "n
 /** Ergebnis von `removeDevice`: `wasReadable` sagt, ob dessen Fassung in diesem Lauf lesbar war und also übernommen wurde; sonst gingen die Daten, die nur dieses Gerät kannte, verloren. */
 export type RemoveDeviceResult =
   | { ok: true; wasReadable: boolean; removed: boolean }
-  | { ok: false; reason: "locked" | "not-ready" | "storage-failed" | "own-device" | "remove-failed" };
+  | { ok: false; reason: "locked" | "not-ready" | "storage-failed" | "own-device" | "not-a-device" | "remove-failed" };
 
 export interface TableStore {
   /** Liest alle Gerätedateien neu, vereinigt in den Arbeitsspeicher, dreht bei Bedarf vor und schreibt die eigene Fassung, wenn sie vom Vereinigten abweicht. Wirft nie. */
@@ -260,40 +266,46 @@ export function createTableStore(o: TableStoreOptions): TableStore {
       return persisting ? { error: "storage-failed" } : undefined;
     }
     const ownId = files.deviceId;
+    // Abschlussdateien ersetzter Ketten sind keine Geräte: sie zählen weder für den Zustand noch für Zeilen noch für Befunde (ein Befund an ihnen hat keine Geräte-ID).
+    const isClosingEntry = (e: DeviceFileEntry): boolean => e.deviceId !== null && isClosingId(e.deviceId);
+    const deviceEntries = read.entries.filter((e) => !isClosingEntry(e));
     const keyRead = adoptRun !== null ? adoptRun.content : keys.read();
     const keyCorrupt = keyRead !== null && "error" in keyRead;
     const content = keyRead !== null && !("error" in keyRead) ? keyRead : null;
 
     // 1. Jede Datei einordnen: Kopf lesen. Was nicht einmal einen Kopf hat, wird gemeldet und bleibt liegen.
     const heads: { entry: ReadEntry; head: FileHead }[] = [];
+    const closingHeads: { entry: ReadEntry; head: FileHead }[] = [];
     for (const e of read.entries) {
+      const closing = isClosingEntry(e);
+      const who = closing ? null : e.deviceId;
       if (!("bytes" in e)) {
-        problems.push({ kind: e.problem, deviceId: e.deviceId, path: e.path });
+        problems.push({ kind: e.problem, deviceId: who, path: e.path });
         continue;
       }
       const h = readEnvelopeHeader(e.bytes);
       if (!h.ok) {
-        problems.push({ kind: h.reason === "version" ? "newer-format" : "unreadable-header", deviceId: e.deviceId, path: e.path });
+        problems.push({ kind: h.reason === "version" ? "newer-format" : "unreadable-header", deviceId: who, path: e.path });
         continue;
       }
-      heads.push({ entry: e, head: { deviceId: e.deviceId, chainId: toHex(h.header.chainId), stand: h.header.stand } });
+      (closing ? closingHeads : heads).push({ entry: e, head: { deviceId: e.deviceId, chainId: toHex(h.header.chainId), stand: h.header.stand } });
     }
 
     // 2. Kein Schlüssel: nichts zu öffnen. Dateien ohne Schlüssel heißen `locked`, nie `not-set-up` (sonst baute ein Gerät mit älterer Fassung eine zweite Kette).
     if (content === null) {
       const st = deriveStatus({
-        deviceFiles: read.entries.length, readableHeads: heads.length, hasKey: false, keyCorrupt,
+        deviceFiles: deviceEntries.length, readableHeads: heads.length, hasKey: false, keyCorrupt,
         openedFiles: 0, ownChainMatches: false, storageError: false,
       });
       if (st.state === "not-set-up") memory.reset();
-      else if (st.reason !== null) memory.lock(st.reason, unopenedRows(read.entries, heads));
+      else if (st.reason !== null) memory.lock(st.reason, unopenedRows(deviceEntries, heads));
       return persisting ? { error: st.state === "not-set-up" ? "not-ready" : "locked" } : undefined;
     }
 
     // 3 und 4. Mit einem Schlüssel: jeden Kopf gegen ihn einordnen (Sprungdeckel), die Schlüssel der Stände nur im Arbeitsspeicher ableiten und öffnen.
     // Aus dem Schlüsselbund gelesene Bytes gehören diesem Lauf und werden mit ihm geleert; ein eingegebener Code gehört dem Aufrufer, dort arbeitet der Lauf auf einer Kopie.
     // Älter oder fremde Kette: nicht geöffnet, kein Befund (das Gerät dort hat noch nicht nachgezogen, oder die Kette wurde ersetzt). Zu weit voraus: beschädigt.
-    const openWith = async (c: RecoveryCodeContent, borrowed: boolean, sink: FileProblem[]): Promise<{ opened: Opened[]; states: Map<number, ChainState>; chainId: string; stand: number }> => {
+    const openWith = async (c: RecoveryCodeContent, borrowed: boolean, sink: FileProblem[]): Promise<{ opened: Opened[]; closings: number; states: Map<number, ChainState>; chainId: string; stand: number }> => {
       const baseState: ChainState = borrowed
         ? { chainId: Uint8Array.from(c.chainId), stand: c.stand, chainKey: Uint8Array.from(c.key) }
         : { chainId: c.chainId, stand: c.stand, chainKey: c.key };
@@ -301,6 +313,10 @@ export function createTableStore(o: TableStoreOptions): TableStore {
       const mine = { chainId: toHex(c.chainId), stand: c.stand };
       const wanted = new Set<number>([mine.stand]);
       for (const h of heads) {
+        const cl = classifyFile(mine, h.head, ratchet.maxJump);
+        if (cl === "same" || cl === "ahead") wanted.add(h.head.stand);
+      }
+      for (const h of closingHeads) {
         const cl = classifyFile(mine, h.head, ratchet.maxJump);
         if (cl === "same" || cl === "ahead") wanted.add(h.head.stand);
       }
@@ -335,23 +351,49 @@ export function createTableStore(o: TableStoreOptions): TableStore {
         if (t === null || !t.ok) { bad("bad-content"); continue; }
         got.push({ entry: h.entry, stand: h.head.stand, payload: p, table: t.table });
       }
-      return { opened: got, states, chainId: mine.chainId, stand: mine.stand };
+      // Abschlussdateien der eigenen Kette: nur eine, die sich mit dem Schlüssel öffnen lässt und die Markierung trägt, zählt. Ältere und fremde sind still (eine ältere ist nicht mehr zu öffnen).
+      let closings = 0;
+      for (const h of closingHeads) {
+        const cl = classifyFile(mine, h.head, ratchet.maxJump);
+        if (cl === "behind" || cl === "foreign-chain") continue;
+        const bad = (kind: FileProblemKind): void => { sink.push({ kind, deviceId: null, path: h.entry.path }); };
+        if (cl === "too-far") { bad("too-far"); continue; }
+        const ck = cryptoKeys.get(h.head.stand);
+        if (ck === undefined) { bad("authentication"); continue; }
+        const r = await openEnvelope(ck, h.entry.bytes);
+        if (!r.ok) { bad(r.reason === "truncated" ? "bad-content" : "authentication"); continue; }
+        const c = decodeClosing(r.plaintext);
+        if ("error" in c) { bad(c.error === "version" ? "newer-format" : "bad-content"); continue; }
+        closings++;
+      }
+      return { opened: got, closings, states, chainId: mine.chainId, stand: mine.stand };
     };
     const main = await openWith(content, adoptRun !== null, problems);
     const { opened, states } = main;
     const own = { chainId: main.chainId, stand: main.stand };
 
+    // 4b. Eine Abschlussdatei der eigenen Kette, mit dem eigenen Schlüssel gelesen: ein anderes Gerät hat den Schlüssel ersetzt. Gesperrt, nichts geschrieben, auch wenn die eigene alte Datei
+    // noch lesbar ist. Der Ausweg ist der neue Code (`adopt`, der die alte Fassung mit dem alten Schlüssel übernimmt). Ein eingegebener Code liest die alte Kette nicht, also gilt das dort nicht.
+    if (adoptRun === null && main.closings > 0) {
+      const st = deriveStatus({
+        deviceFiles: deviceEntries.length, readableHeads: heads.length, hasKey: true, keyCorrupt: false,
+        openedFiles: opened.length, ownChainMatches: true, storageError: false, chainReplaced: true,
+      });
+      memory.lock(st.reason ?? "key-replaced", unopenedRows(deviceEntries, heads));
+      return persisting ? { error: "locked" } : undefined;
+    }
+
     // 5. Nichts geöffnet: gesperrt, mit Grund, und es wird nichts geschrieben (Regel 4).
     if (opened.length === 0) {
       const st = deriveStatus({
-        deviceFiles: read.entries.length, readableHeads: heads.length, hasKey: true, keyCorrupt: false,
+        deviceFiles: deviceEntries.length, readableHeads: heads.length, hasKey: true, keyCorrupt: false,
         openedFiles: 0, ownChainMatches: heads.some((h) => h.head.chainId === own.chainId), storageError: false,
       });
       if (adoptRun !== null) {
         const r = st.reason;
         return failAdopt(r === "table-missing" || r === "unreadable" || r === "foreign-chain" ? r : "key-opens-nothing");
       }
-      if (st.reason !== null) memory.lock(st.reason, unopenedRows(read.entries, heads));
+      if (st.reason !== null) memory.lock(st.reason, unopenedRows(deviceEntries, heads));
       return persisting ? { error: "locked" } : undefined;
     }
     for (const x of opened) if (x.entry.deviceId !== null) ctx.openedDevices.add(x.entry.deviceId);
@@ -379,7 +421,7 @@ export function createTableStore(o: TableStoreOptions): TableStore {
     const target = Math.max(...opened.map((x) => x.stand));
     const ownOpened = opened.find((x) => x.entry.deviceId === ownId);
     const ownCarried = carried.find((x) => x.entry.deviceId === ownId);
-    const ownPresent = read.entries.some((e) => e.deviceId === ownId);
+    const ownPresent = deviceEntries.some((e) => e.deviceId === ownId);
     const language: PlaceholderLanguage = ownOpened?.payload.vault.language
       ?? ownCarried?.payload.vault.language
       ?? [...opened].sort((a, b) => (a.entry.deviceId ?? "").localeCompare(b.entry.deviceId ?? ""))[0]?.payload.vault.language
@@ -392,7 +434,7 @@ export function createTableStore(o: TableStoreOptions): TableStore {
       const merged = tableForgotten(table);
       const rows: DeviceView[] = [];
       const ids = new Set<string>();
-      for (const e of read.entries) if (e.deviceId !== null) ids.add(e.deviceId);
+      for (const e of deviceEntries) if (e.deviceId !== null) ids.add(e.deviceId);
       for (const id of [...ids].sort()) {
         if (id === ownId && ownView !== null) continue;
         const op = rowsOpened.find((x) => x.entry.deviceId === id);
@@ -481,11 +523,31 @@ export function createTableStore(o: TableStoreOptions): TableStore {
         problems.push({ kind: "write-failed", deviceId: ownId, path: files.ownPath });
         return failAdopt("storage-failed");
       }
+      // Schlüssel ersetzen: zuerst die Abschlussdatei der alten Kette (Regel 10), dann die neue Fassung. Scheitert die Abschlussdatei, ist nichts geändert.
+      let closingId: string | null = null;
+      if (replaceWith !== null) {
+        const oldState = states.get(target);
+        const oldKey = oldState === undefined ? null : await ratchet.encryptionKey(oldState);
+        if (oldState === undefined || oldKey === null || !oldKey.ok) {
+          problems.push({ kind: "write-failed", deviceId: ownId, path: files.ownPath });
+          return failAdopt("storage-failed");
+        }
+        const id = closingDeviceId(ownId, toHex(oldState.chainId));
+        const closing = await sealEnvelope(oldKey.value, { deviceId: id, chainId: oldState.chainId, stand: oldState.stand }, encodeClosing());
+        const cw = closing.ok ? await o.closingFiles(id).writeOwn(closing.bytes) : null;
+        if (cw === null || !cw.ok) {
+          problems.push({ kind: "write-failed", deviceId: null, path: files.ownPath });
+          return failAdopt("storage-failed");
+        }
+        closingId = id;
+      }
       // Eine eigene Datei, die wir nicht öffnen konnten, wird nie überschrieben: erst beiseitelegen, scheitert das, wird nichts geschrieben (Regel 5).
       // Eine eigene Datei der alten Kette, die wir mit dem alten Schlüssel gelesen und übernommen haben, ist nicht beschädigt und wird abbruchsicher ersetzt.
       const setAside = ownPresent && ownOpened === undefined && ownCarried === undefined;
       const w = setAside ? await files.replaceDamagedOwn(sealed.bytes) : await files.writeOwn(sealed.bytes);
       if (!w.ok) {
+        // Kein Abbruch sperrt ein Gerät grundlos: die Abschlussdatei geht wieder weg (scheitert auch das, bleibt der nächste Schlüsselwechsel der Ausweg und der Befund steht da).
+        if (closingId !== null) await files.removeForeign(closingId);
         problems.push({ kind: "write-failed", deviceId: ownId, path: files.ownPath });
         return failAdopt("storage-failed");
       }
@@ -506,6 +568,16 @@ export function createTableStore(o: TableStoreOptions): TableStore {
     if (fileOk) memory.open(next, { stand: finalStand, language, devices: devicesOf(next, ownView(finalStand)), codeStand: maxOrNull(openedCodeStand, maxOrNull(codeShown, replaceWith !== null ? null : ownOpened?.payload.device.codeShownAtStand ?? null)) });
     if (keyFailed) ctx.keyFailed = true;
     if (keyFailed && adoptRun !== null) adoptRun.failure = "key-write-failed";
+
+    // Aufräumen: Die Abschlussdatei, die dieses Gerät für eine ersetzte Kette abgelegt hat, geht weg, sobald keine andere Datei dieser Kette mehr im Ordner liegt.
+    // Jede Datei ohne lesbaren Kopf hält sie fest (sie könnte zur alten Kette gehören). Scheitert das Löschen, holt der nächste Lauf es nach.
+    if (fileOk && replaceWith === null && adoptRun === null && heads.length === deviceEntries.length) {
+      for (const ch of closingHeads) {
+        if (ch.head.chainId === own.chainId || ch.head.deviceId !== closingDeviceId(ownId, ch.head.chainId)) continue;
+        if (heads.some((h) => h.head.chainId === ch.head.chainId)) continue;
+        if (ch.head.deviceId !== null) await files.removeForeign(ch.head.deviceId);
+      }
+    }
     return undefined;
   }
 
@@ -544,6 +616,7 @@ export function createTableStore(o: TableStoreOptions): TableStore {
 
   async function removeDeviceJob(deviceId: string): Promise<RemoveDeviceResult> {
     if (deviceId === files.deviceId) return { ok: false, reason: "own-device" };
+    if (isClosingId(deviceId)) return { ok: false, reason: "not-a-device" };
     // Erst übernehmen (liest frisch, vereinigt, schreibt die eigene Fassung), dann löschen. Scheitert das Schreiben oder ist das Gerät gesperrt, bleibt die fremde Datei, wo sie ist.
     const ctx = ctxOf({ persisting: true });
     const res = await exec(ctx);

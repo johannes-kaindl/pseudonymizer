@@ -158,6 +158,7 @@ export function makeDevice(fs: FakeFs, o: DeviceOptions): Device {
   const name = { current: o.name ?? o.deviceId };
   const opts: TableStoreOptions = {
     files,
+    closingFiles: (id) => createDeviceFiles({ folder: FOLDER, extension: EXT, deviceId: id, ports: manual.ports() }),
     keys,
     memory,
     deviceName: () => name.current,

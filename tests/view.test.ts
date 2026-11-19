@@ -109,7 +109,7 @@ describe("PseudonymizerView", () => {
   });
 
   it("locked: every reason has its own sentence", async () => {
-    const reasons: LockReason[] = ["no-key", "table-missing", "foreign-chain", "key-opens-nothing", "unreadable", "key-corrupt", "storage-failed"];
+    const reasons: LockReason[] = ["no-key", "table-missing", "foreign-chain", "key-opens-nothing", "unreadable", "key-corrupt", "storage-failed", "key-replaced"];
     const seen = new Set<string>();
     for (const reason of reasons) {
       const m = make("locked", { reason, model: readyModel({ state: "locked", reason, rows: [], stand: null, codeStand: null }) });

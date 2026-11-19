@@ -171,6 +171,7 @@ export const STRINGS = {
     "view.locked.unreadable": "None of the device files in the folder \"{0}\" can be read. They may be damaged or from a newer version of the plugin. Check the folder in the plugin settings.",
     "view.locked.key-corrupt": "The key on this device cannot be read. Enter the recovery code to store it again.",
     "view.locked.storage-failed": "The folder \"{0}\" could not be read. Check the folder in the plugin settings.",
+    "view.locked.key-replaced": "Another device has replaced the key of this table. This device writes nothing more under the old key. Enter the new recovery code to carry on; what only this device knew is kept.",
     "view.devices.name.name": "Name of this device",
     "view.devices.name.desc": "Shown in the list of devices. Other devices see a new name after this device has saved its file.",
     "view.devices.files": "Device files",
@@ -241,6 +242,7 @@ export const STRINGS = {
     "notice.device.gone": "That device file is no longer there.",
     "notice.device.failed.storage-failed": "The device was not removed: this device's version could not be written first.",
     "notice.device.failed.own-device": "This is the device you are using; it cannot remove itself.",
+    "notice.device.failed.not-a-device": "This file is the closing mark of a replaced key, not a device. It is cleaned up automatically.",
     "notice.device.failed.remove-failed": "This device's version is written, but the file of the other device could not be deleted.",
   },
   de: {
@@ -411,6 +413,7 @@ export const STRINGS = {
     "view.locked.unreadable": "Keine der Gerätedateien im Ordner \"{0}\" lässt sich lesen. Sie können beschädigt sein oder aus einer neueren Fassung des Plugins stammen. Prüfe den Ordner in den Einstellungen des Plugins.",
     "view.locked.key-corrupt": "Der Schlüssel auf diesem Gerät lässt sich nicht lesen. Gib den Wiederherstellungs-Code ein, um ihn neu abzulegen.",
     "view.locked.storage-failed": "Der Ordner \"{0}\" ließ sich nicht lesen. Prüfe den Ordner in den Einstellungen des Plugins.",
+    "view.locked.key-replaced": "Ein anderes Gerät hat den Schlüssel dieser Tabelle ersetzt. Dieses Gerät schreibt unter dem alten Schlüssel nichts mehr. Gib den neuen Wiederherstellungs-Code ein, um weiterzumachen; was nur dieses Gerät wusste, bleibt erhalten.",
     "view.devices.name.name": "Name dieses Geräts",
     "view.devices.name.desc": "Erscheint in der Geräteliste. Andere Geräte sehen einen neuen Namen, sobald dieses Gerät seine Datei gespeichert hat.",
     "view.devices.files": "Gerätedateien",
@@ -481,6 +484,7 @@ export const STRINGS = {
     "notice.device.gone": "Diese Gerätedatei ist nicht mehr da.",
     "notice.device.failed.storage-failed": "Das Gerät wurde nicht entfernt: Die Fassung dieses Geräts ließ sich vorher nicht schreiben.",
     "notice.device.failed.own-device": "Das ist das Gerät, das du gerade benutzt; es kann sich nicht selbst entfernen.",
+    "notice.device.failed.not-a-device": "Diese Datei ist die Abschlussmarke eines ersetzten Schlüssels, kein Gerät. Sie wird automatisch aufgeräumt.",
     "notice.device.failed.remove-failed": "Die Fassung dieses Geräts ist geschrieben, aber die Datei des anderen Geräts ließ sich nicht löschen.",
   },
 } as const;

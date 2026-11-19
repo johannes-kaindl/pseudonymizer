@@ -320,21 +320,28 @@ describe("replaceKey: neue Kette (Spec 8.3 „Entfernen entzieht keinen Zugriff�
 // ── adopt nach dem Ersetzen ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 describe("adopt nach einem Schlüsselwechsel: die alte Fassung wandert mit (Spec 8.3)", () => {
-  /** a ersetzt den Schlüssel; b (alter Schlüssel) kennt danach etwas, das a nie gelesen hat. */
-  async function afterReplace(): Promise<{ fs: FakeFs; a: Device; b: Device }> {
+  /** a ersetzt den Schlüssel; b (alter Schlüssel) hat vorher etwas getan, das a nie gelesen hat: seine Datei erreicht a erst nach dem Ersetzen (Sync-Verzug).
+   *  Danach ist b gesperrt und schreibt nicht mehr (Abschlussdatei, `table-store-closing.test.ts`); die Fassung von vorhin liegt noch da. */
+  async function afterReplace(bWork: (b: Device) => Promise<void> = () => Promise.resolve()): Promise<{ fs: FakeFs; a: Device; b: Device }> {
     const fs = new FakeFs(FOLDER);
     const a = await readyDevice(fs, "dev-a", twoPersons(), 0);
     const b = await readyDevice(fs, "dev-b", twoPersons(), 0);
+    const bOld = fs.get(`dev-b${EXT}`) ?? new Uint8Array();
+    await bWork(b);
+    const bNew = fs.get(`dev-b${EXT}`) ?? new Uint8Array();
+    fs.put(`dev-b${EXT}`, bOld);
     expect(await a.store.replaceKey({ chainId: Uint8Array.from(NEW_CHAIN.chainId), stand: 0, key: Uint8Array.from(NEW_CHAIN.key) })).toEqual({ ok: true });
+    fs.put(`dev-b${EXT}`, bNew);
     return { fs, a, b };
   }
   const newCode = () => ({ chainId: Uint8Array.from(NEW_CHAIN.chainId), stand: 0, key: Uint8Array.from(NEW_CHAIN.key) });
 
   it("ein Eintrag, den nur das alte Gerät kannte, steht danach in seiner Fassung unter der neuen Kette", async () => {
-    const { fs, b } = await afterReplace();
-    // b arbeitet mit dem alten Schlüssel weiter: neuer Eintrag und eine Marke, von denen a nichts weiß.
-    await b.store.persist(personTable("q7d2w8n4tz", "Carla Beispiel", sampleTable()));
-    expect(await b.store.forget(ID_B)).toEqual({ ok: true, stand: 1 });
+    // b hat mit dem alten Schlüssel gearbeitet, ehe es vom Wechsel erfuhr: neuer Eintrag und eine Marke, von denen a nichts weiß.
+    const { fs, b } = await afterReplace(async (d) => {
+      await d.store.persist(personTable("q7d2w8n4tz", "Carla Beispiel", sampleTable()));
+      expect(await d.store.forget(ID_B)).toEqual({ ok: true, stand: 1 });
+    });
     expect(await b.store.adopt(newCode())).toEqual({ ok: true });
     const own = await openOf(fs, "dev-b", NEW_CHAIN);
     expect(own.header.stand).toBe(0);
@@ -348,8 +355,7 @@ describe("adopt nach einem Schlüsselwechsel: die alte Fassung wandert mit (Spec
   });
 
   it("dasselbe nach einem Neustart (leerer Arbeitsspeicher): die alte Fassung wird mit dem alten Schlüssel aus dem Schlüsselbund gelesen", async () => {
-    const { fs, b } = await afterReplace();
-    await b.store.persist(personTable("q7d2w8n4tz", "Carla Beispiel", sampleTable()));
+    const { fs, b } = await afterReplace((d) => d.store.persist(personTable("q7d2w8n4tz", "Carla Beispiel", sampleTable())).then(() => undefined));
     const restarted = makeDevice(fs, { deviceId: "dev-b", content: null, secrets: b.secrets, name: "dev-b" });
     expect(restarted.memory.table()).toBeNull();
     expect(await restarted.store.adopt(newCode())).toEqual({ ok: true });
