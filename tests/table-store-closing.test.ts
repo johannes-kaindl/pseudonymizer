@@ -73,7 +73,7 @@ describe("Abschlussdatei: andere Geräte sperren sich (Spec 8.3)", () => {
     expect(b.secrets.raw(KEY_SECRET_ID)).toBe(keyBefore);
   });
 
-  it("(a) auch ein Gerät, dessen Schlüssel hinter dem der Abschlussdatei liegt, sperrt sich (die Abschlussdatei trägt den höchsten gelesenen Stand)", async () => {
+  it("(a) auch ein Gerät, dessen Schlüssel hinter dem der Abschlussdatei liegt, sperrt sich (die Abschlussdatei trägt den höchsten gelesenen Stand plus Vorsprung)", async () => {
     const fs = new FakeFs(FOLDER);
     // b liegt auf Stand 0 und hat a (Stand 1) noch nie gelesen; sonst zöge es beim Auffrischen selbst auf Stand 1 vor.
     const b = await readyDevice(fs, "dev-b", twoPersons(), 0);
@@ -81,7 +81,7 @@ describe("Abschlussdatei: andere Geräte sperren sich (Spec 8.3)", () => {
     expect(storedKey(b).stand).toBe(0);
     expect(await a.store.replaceKey(newContent())).toEqual({ ok: true });
     const h = readEnvelopeHeader(fs.get(CLOSING_FILE) ?? new Uint8Array());
-    expect(h.ok && h.header.stand).toBe(1);
+    expect(h.ok && h.header.stand).toBe(1 + 64); // gelesener Höchststand plus Vorsprung (N1)
     expect(storedKey(b).stand).toBe(0);
     await b.store.refresh();
     expect(b.memory.reason()).toBe("key-replaced");
@@ -453,5 +453,83 @@ describe("Abschlussdatei: andere Geräte sperren sich (Spec 8.3)", () => {
     await a.store.refresh();
     expect(fs.names()).toContain(`${closingA}${EXT}`);
     expect(a.store.problems().some((p) => p.kind === "bad-content")).toBe(true);
+  });
+
+  // ── Sicherheits-Lesung Runde 2, N1: die Abschlussdatei liegt mit Vorsprung, ein Code mit höherem Stand wird am Namen abgelehnt ──
+
+  /** b schreibt unter `stand` (Sync-Verzug: a hat die Datei beim Ersetzen nicht gelesen) und startet mit passendem Schlüssel neu. */
+  async function laggedB(fs: FakeFs, stand: number): Promise<Device> {
+    await seedFile(fs, { deviceId: "dev-b", stand, table: twoPersons(), name: "dev-b" });
+    return makeDevice(fs, { deviceId: "dev-b", content: await contentAt(CHAIN, stand), name: "dev-b" });
+  }
+
+  it("(N1) b vergisst vor der Ankunft der Abschlussdatei (Stand +1): danach gesperrt; die Datei trägt den Vorsprung", async () => {
+    const { fs, b } = await afterReplace();
+    const closing = fs.get(CLOSING_FILE) ?? new Uint8Array();
+    await fs.adapter.remove(fs.path(CLOSING_FILE)); // noch nicht per Sync angekommen
+    expect(await b.store.forget(ID_B)).toMatchObject({ ok: true, stand: 1 });
+    fs.put(CLOSING_FILE, closing);
+    await b.store.refresh();
+    expect(b.memory.state()).toBe("locked");
+    expect(b.memory.reason()).toBe("key-replaced");
+    const h = readEnvelopeHeader(closing);
+    expect(h.ok && h.header.stand).toBe(64);
+  });
+
+  it("(N1) b steht beim Eintreffen der Abschlussdatei +10 und +64 Stände weiter: gesperrt", async () => {
+    for (const lead of [10, 64]) {
+      const { fs } = await afterReplace();
+      const b2 = await laggedB(fs, lead);
+      await b2.store.refresh();
+      expect(b2.memory.reason()).toBe("key-replaced");
+    }
+  });
+
+  it("(N1) Grenze: ein Gerät über dem Vorsprung (65) kann die Datei nicht öffnen und bleibt bereit; sein Code wird am Namen abgelehnt", async () => {
+    const { fs, a } = await afterReplace();
+    const b2 = await laggedB(fs, 65);
+    await b2.store.refresh();
+    expect(b2.memory.state()).toBe("ready");
+    expect(await a.store.adopt(await contentAt(CHAIN, 65))).toEqual({ ok: false, reason: "key-replaced" });
+  });
+
+  it("(N1) der Code eines Geräts mit höherem Stand (70) wird auf dem ersetzenden Gerät abgelehnt: nichts gespeichert, Abschlussdatei bleibt", async () => {
+    const { fs, a } = await afterReplace();
+    const keyBefore = a.secrets.raw(KEY_SECRET_ID);
+    fs.clearLog();
+    expect(await a.store.adopt(await contentAt(CHAIN, 70))).toEqual({ ok: false, reason: "key-replaced" });
+    expect(fs.log.filter((l) => !l.startsWith("read") && !l.startsWith("list"))).toEqual([]);
+    expect(a.secrets.raw(KEY_SECRET_ID)).toBe(keyBefore);
+    expect(fs.names()).toContain(CLOSING_FILE);
+  });
+
+  it("(N1) der abgeleitete Zustand mit Vorsprung wird geleert wie alle anderen", async () => {
+    const { a } = await afterReplace();
+    expect(a.wiped.some((w) => w.stand === 64 && w.chainKey.every((x) => x === 0))).toBe(true);
+  });
+
+  it("(N1) die Heilung und das Wegräumen funktionieren mit dem Vorsprung", async () => {
+    const { restarted, fs } = await crashedReplace();
+    const h = readEnvelopeHeader(fs.get(CLOSING_FILE) ?? new Uint8Array());
+    expect(h.ok && h.header.stand).toBe(64);
+    await restarted.store.refresh();
+    expect(restarted.memory.state()).toBe("ready");
+    expect(fs.names()).not.toContain(CLOSING_FILE);
+  });
+
+  it("(N5) verschluckt der lokale Speicher die Marke, bricht Schlüssel ersetzen vor der Abschlussdatei ab: nichts geschrieben, Schlüssel unberührt", async () => {
+    const fs = new FakeFs(FOLDER);
+    const a = makeDevice(fs, { deviceId: "dev-a", content: await contentAt(CHAIN, 0), name: "dev-a", pendingSwallows: true });
+    await seedFile(fs, { deviceId: "dev-a", stand: 0, table: twoPersons() });
+    await a.store.refresh();
+    expect(a.memory.state()).toBe("ready");
+    const before = a.secrets.raw(KEY_SECRET_ID);
+    const oldOwn = fs.get(`dev-a${EXT}`);
+    fs.clearLog();
+    expect(await a.store.replaceKey(newContent())).toEqual({ ok: false, reason: "storage-failed" });
+    expect(fs.log).toEqual([]);
+    expect(fs.names()).not.toContain(CLOSING_FILE);
+    expect(fs.get(`dev-a${EXT}`)).toEqual(oldOwn);
+    expect(a.secrets.raw(KEY_SECRET_ID)).toBe(before);
   });
 });

@@ -123,6 +123,8 @@ export interface DeviceOptions {
   keyWriteFails?: boolean;
   /** Die Marke dieses Geräts; ein Neustart (`makeDevice` mit demselben Schlüsselbund) übernimmt sie. */
   pending?: { current: string | null };
+  /** Der lokale Speicher verschluckt das Schreiben der Marke (Obsidians `saveLocalStorage` kann scheitern, ohne es zu sagen). */
+  pendingSwallows?: boolean;
 }
 
 export function makeDevice(fs: FakeFs, o: DeviceOptions): Device {
@@ -167,7 +169,7 @@ export function makeDevice(fs: FakeFs, o: DeviceOptions): Device {
     keys,
     memory,
     deviceName: () => name.current,
-    replacePending: { read: () => pending.current, write: (c) => { pending.current = c; } },
+    replacePending: { read: () => pending.current, write: (c) => { if (o.pendingSwallows !== true) pending.current = c; } },
     defaultLanguage: () => o.language ?? "de",
     onProblem: (p) => { reports.push(p); },
     ratchet: { advance, advanceTo, encryptionKey, wipe: (s) => { wiped.push(s); wipe(s); }, maxJump: RATCHET_MAX_JUMP },

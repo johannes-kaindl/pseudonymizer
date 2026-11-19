@@ -20,15 +20,15 @@
 // 7. **Alles oder nichts** (Spec 8.7, Review-Fokus 5): Die Änderung eines `persist` kommt erst in den Arbeitsspeicher, wenn die Datei geschrieben ist. Was nur gelesen wurde, ist schon vorher drin.
 // 8. **Nie zweimal unter demselben Stand** (Spec 8.3 Regel 2, `mustAdvanceBeforeWrite`): Trägt die zu schreibende Fassung eine Vergessen-Marke für eine ID, die dieses Gerät unter diesem Stand schon lebend
 //    geschrieben hat, wird vor dem Schreiben um einen Stand weitergedreht. Das gilt für gelesene Marken (`refresh`) genauso wie für eine, die ein `persist` selbst mitbringt.
-// 10. **Schlüssel ersetzen sperrt die anderen Geräte** (Spec 8.3). Vor der neuen Fassung legt das ersetzende Gerät unter der ALTEN Kette und ihrem höchsten gelesenen Stand eine Abschlussdatei ab
+// 10. **Schlüssel ersetzen sperrt die anderen Geräte** (Spec 8.3). Vor der neuen Fassung legt das ersetzende Gerät unter der ALTEN Kette und ihrem höchsten gelesenen Stand plus 64 (`CLOSING_LEAD`, N1) eine Abschlussdatei ab
 //    (`closed-<Gerät>-<Kette>`, Inhalt nur „ersetzt“, `core/payload.ts`). Ein Gerät, das sie mit seinem Schlüssel öffnet, sperrt sich (`key-replaced`) und schreibt nichts mehr. Die Abschlussdatei kommt
 //    vor der neuen Fassung, weil ein Erfolg kein Gerät ungesperrt lassen darf; scheitert danach die neue Fassung, nimmt das Gerät sie zurück, damit kein Abbruch ein Gerät grundlos sperrt.
 //    Sie ist kein Gerät (Geräteliste, Befunde, „Gerät entfernen“). Das ersetzende Gerät räumt sie weg, sobald keine andere Datei der alten Kette mehr im Ordner liegt.
 //    Stürzt es zwischen Abschlussdatei und neuer Fassung ab, heilt es sich selbst: findet es beim Auffrischen nur seine EIGENE Abschlussdatei, hält der Schlüsselbund noch die alte Kette und liegt keine eigene Datei
 //    einer neuen Kette im Ordner UND trägt dieses Gerät die Marke `replacePending` für genau diese Kette (gesetzt vor der Abschlussdatei, gelöscht nach dem Ablegen des neuen Schlüssels; W2), löscht es die
 //    Abschlussdatei und die Marke und bleibt bereit (die anderen entsperren beim nächsten Auffrischen). Eine fremde Abschlussdatei sperrt weiter. Ohne Marke heilt nichts: ein zurückgeholter alter Code erzeugt
-//    denselben Ordnerzustand, und dann wäre das Ersetzen für alle Geräte stillschweigend rückgängig. Aus demselben Grund lehnt `adopt` einen Code ab, unter dessen Kette eine mit ihm lesbare Abschlussdatei liegt
-//    (`key-replaced`, nichts gespeichert).
+//    denselben Ordnerzustand, und dann wäre das Ersetzen für alle Geräte stillschweigend rückgängig. Aus demselben Grund lehnt `adopt` einen Code ab, sobald irgendeine Abschlussdatei seiner Kette im Ordner liegt
+//    (am Namen erkannt, auch wenn er sie nicht öffnen kann; `key-replaced`, nichts gespeichert).
 // 11. **Geräte-ID aus dem authentisierten Kopf** (K5): der Dateiname sagt, wem eine Datei gehört, aber erst der Kopf beweist es. Stimmen beide nicht überein (umbenannte Datei), ist es ein Befund `bad-content` und die Datei
 //    zählt weder als Gerät noch als Abschlussdatei.
 // 9. **Der alte Kettenzustand wird geleert** (`wipe`), sobald der neue im Schlüsselbund steht. Jeder Zustand, den ein Lauf ableitet, wird am Ende des Laufs geleert, auch bei einem Fehler.
@@ -40,6 +40,7 @@ import { openEnvelope, readEnvelopeHeader, sealEnvelope } from "../vendor/kit/ke
 import type { RecoveryCodeContent } from "../vendor/kit/recovery-code";
 import {
   RATCHET_MAX_JUMP,
+  RATCHET_MAX_STAND,
   advance,
   advanceTo,
   encryptionKey,
@@ -89,6 +90,11 @@ export interface RatchetPort {
   /** Sprungdeckel nach oben (Spec 8.3); Standard `RATCHET_MAX_JUMP`. */
   maxJump: number;
 }
+
+/** Vorsprung der Abschlussdatei vor dem höchsten gelesenen Stand der alten Kette (N1, Sicherheits-Lesung Runde 2): Ein Gerät, das bei Sync-Verzug schon bis zu 64 Stände weitergedreht hat
+ *  (jedes Vergessen dreht einen Stand), öffnet sie trotzdem mit seinem Schlüssel (die Ratsche läuft nur vorwärts, ein Gerät über der Datei könnte sie nie öffnen) und sperrt sich.
+ *  64 liegt weit unter dem Sprungdeckel 1000 der Ratsche, jedes Gerät bis dahin kostet höchstens 64 Ableitungen im Arbeitsspeicher. */
+const CLOSING_LEAD = 64;
 
 const DEFAULT_RATCHET: RatchetPort = { advance, advanceTo, encryptionKey, wipe, maxJump: RATCHET_MAX_JUMP };
 
@@ -314,6 +320,13 @@ export function createTableStore(o: TableStoreOptions): TableStore {
       if (st.state === "not-set-up") memory.reset();
       else if (st.reason !== null) memory.lock(st.reason, unopenedRows(deviceEntries, heads));
       return persisting ? { error: st.state === "not-set-up" ? "not-ready" : "locked" } : undefined;
+    }
+
+    // 2b. Ein eingegebener Code, unter dessen Kette irgendeine Abschlussdatei im Ordner liegt (am Namen erkannt, auch wenn er sie nicht öffnen kann, etwa bei einem Stand über ihr): ersetzt, nichts gespeichert (N1).
+    // Der Code selbst ist geprüft, eine gefälschte Abschlussdatei sperrt so nur das Eingeben dieses alten Codes, nie ein Gerät.
+    if (adoptRun !== null) {
+      const suffix = `-${toHex(content.chainId)}`;
+      if (read.entries.some((e) => e.deviceId !== null && isClosingId(e.deviceId) && e.deviceId.endsWith(suffix))) return failAdopt("key-replaced");
     }
 
     // 3 und 4. Mit einem Schlüssel: jeden Kopf gegen ihn einordnen (Sprungdeckel), die Schlüssel der Stände nur im Arbeitsspeicher ableiten und öffnen.
@@ -558,7 +571,11 @@ export function createTableStore(o: TableStoreOptions): TableStore {
       // Schlüssel ersetzen: zuerst die Abschlussdatei der alten Kette (Regel 10), dann die neue Fassung. Scheitert die Abschlussdatei, ist nichts geändert.
       let closingId: string | null = null;
       if (replaceWith !== null) {
-        const oldState = states.get(target);
+        const readState = states.get(target);
+        // Die Abschlussdatei liegt `CLOSING_LEAD` Stände über dem gelesenen Höchststand (N1); der abgeleitete Zustand wird wie alle anderen geleert.
+        const lead = readState === undefined ? null : await ratchet.advanceTo(readState, Math.min(readState.stand + CLOSING_LEAD, RATCHET_MAX_STAND));
+        if (lead !== null && lead.ok) toWipe.push(lead.value);
+        const oldState = lead !== null && lead.ok ? lead.value : undefined;
         const oldKey = oldState === undefined ? null : await ratchet.encryptionKey(oldState);
         if (oldState === undefined || oldKey === null || !oldKey.ok) {
           problems.push({ kind: "write-failed", deviceId: ownId, path: files.ownPath });
@@ -566,7 +583,14 @@ export function createTableStore(o: TableStoreOptions): TableStore {
         }
         const id = closingDeviceId(ownId, toHex(oldState.chainId));
         // Die Marke vor der Abschlussdatei: nur mit ihr heilt sich dieses Gerät, falls es dazwischen abbricht (W2 a).
-        o.replacePending.write(toHex(oldState.chainId));
+        // Zurückgelesen (N5): schluckt der lokale Speicher das Schreiben, gäbe es nach einem Absturz keinen Ausweg mehr (keine Heilung ohne Marke). Dann wird vor der Abschlussdatei abgebrochen, nichts geschrieben.
+        const mark = toHex(oldState.chainId);
+        o.replacePending.write(mark);
+        if (o.replacePending.read() !== mark) {
+          o.replacePending.write(null);
+          problems.push({ kind: "write-failed", deviceId: null, path: files.ownPath });
+          return failAdopt("storage-failed");
+        }
         const closing = await sealEnvelope(oldKey.value, { deviceId: id, chainId: oldState.chainId, stand: oldState.stand }, encodeClosing());
         const cw = closing.ok ? await o.closingFiles(id).writeOwn(closing.bytes) : null;
         if (cw === null || !cw.ok) {
