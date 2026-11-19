@@ -274,7 +274,7 @@ describe("Abschlussdatei: andere Geräte sperren sich (Spec 8.3)", () => {
     fs.adapter.remove = removeOrig;
     expect(fs.names()).toContain(CLOSING_FILE); // die Lücke: Abschlussdatei da, neue Fassung nicht
     expect(fs.get(`dev-a${EXT}`)).toEqual(oldOwn);
-    const restarted = makeDevice(fs, { deviceId: "dev-a", content: null, name: "dev-a", secrets: a.secrets });
+    const restarted = makeDevice(fs, { deviceId: "dev-a", content: null, name: "dev-a", secrets: a.secrets, pending: a.pending });
     return { fs, a, b, restarted, oldOwn };
   }
 
@@ -334,5 +334,124 @@ describe("Abschlussdatei: andere Geräte sperren sich (Spec 8.3)", () => {
     expect(a.memory.state()).toBe("locked");
     expect(a.memory.reason()).toBe("key-replaced");
     expect(fs.names()).toContain(CLOSING_FILE);
+  });
+
+  // ── Sicherheits-Lesung Runde 1, W2: die Heilung braucht die Marke, ein alter Code hebt das Ersetzen nicht auf ──
+
+  it("(W2 a) die Marke steht, bevor die Abschlussdatei geschrieben wird, und ist nach dem Ersetzen gelöscht", async () => {
+    const fs = new FakeFs(FOLDER);
+    const a = await readyDevice(fs, "dev-a", twoPersons());
+    let atClosing: string | null | undefined;
+    fs.beforeWrite = (p) => { if (p.includes("closed-")) atClosing = a.pending.current; return Promise.resolve(); };
+    expect(await a.store.replaceKey(newContent())).toEqual({ ok: true });
+    expect(atClosing).toBe(hex(CHAIN.chainId));
+    expect(a.pending.current).toBeNull();
+  });
+
+  it("(W2 a) nach dem sauberen Zurücknehmen (die neue Fassung scheitert, die Abschlussdatei geht weg) ist die Marke gelöscht; bleibt sie liegen (Absturz), bleibt auch die Marke", async () => {
+    const fs = new FakeFs(FOLDER);
+    const a = await readyDevice(fs, "dev-a", twoPersons());
+    fs.beforeWrite = (p) => (p.includes(`/dev-a${EXT}`) ? Promise.reject(new Error("Platte voll")) : Promise.resolve());
+    expect(await a.store.replaceKey(newContent())).toEqual({ ok: false, reason: "storage-failed" });
+    fs.beforeWrite = null;
+    expect(fs.names()).not.toContain(CLOSING_FILE);
+    expect(a.pending.current).toBeNull();
+    const { restarted } = await crashedReplace();
+    expect(restarted.pending.current).toBe(hex(CHAIN.chainId));
+  });
+
+  it("(W2 a) die Heilung löscht die Marke", async () => {
+    const { restarted } = await crashedReplace();
+    await restarted.store.refresh();
+    expect(restarted.memory.state()).toBe("ready");
+    expect(restarted.pending.current).toBeNull();
+  });
+
+  it("(W2 a) ohne Marke findet keine Heilung statt: Ordnerzustand wie nach einem Absturz, aber kein Ersetzen läuft", async () => {
+    const fs = new FakeFs(FOLDER);
+    const a0 = await readyDevice(fs, "dev-a", twoPersons());
+    const oldOwn = fs.get(`dev-a${EXT}`);
+    expect(await a0.store.replaceKey(newContent())).toEqual({ ok: true });
+    fs.put(`dev-a${EXT}`, oldOwn ?? new Uint8Array());
+    const a = makeDevice(fs, { deviceId: "dev-a", content: await contentAt(CHAIN, 0), name: "dev-a" });
+    await a.store.refresh();
+    expect(a.memory.state()).toBe("locked");
+    expect(a.memory.reason()).toBe("key-replaced");
+    expect(fs.names()).toContain(CLOSING_FILE);
+  });
+
+  it("(W2 a) eine Marke für eine andere Kette heilt nicht", async () => {
+    const { fs, restarted } = await crashedReplace();
+    restarted.pending.current = "deadbeef";
+    await restarted.store.refresh();
+    expect(restarted.memory.reason()).toBe("key-replaced");
+    expect(fs.names()).toContain(CLOSING_FILE);
+    expect(restarted.pending.current).toBe("deadbeef");
+  });
+
+  it("(W2 b) den alten Code auf dem ersetzenden Gerät einzugeben wird abgelehnt: nichts gespeichert, Abschlussdatei bleibt, b bleibt gesperrt, auch nach dem Auffrischen", async () => {
+    const { fs, a, b } = await afterReplace();
+    const keyBefore = a.secrets.raw(KEY_SECRET_ID);
+    fs.clearLog();
+    expect(await a.store.adopt(await contentAt(CHAIN, 0))).toEqual({ ok: false, reason: "key-replaced" });
+    expect(fs.log.filter((l) => !l.startsWith("read") && !l.startsWith("list"))).toEqual([]);
+    expect(a.secrets.raw(KEY_SECRET_ID)).toBe(keyBefore);
+    await a.store.refresh();
+    expect(a.memory.state()).toBe("ready");
+    expect(fs.names()).toContain(CLOSING_FILE);
+    await b.store.refresh();
+    expect(b.memory.state()).toBe("locked");
+    expect(b.memory.reason()).toBe("key-replaced");
+  });
+
+  it("(W2 b) dasselbe auf einem gesperrten Gerät (b gibt den alten Code noch einmal ein): abgelehnt, es bleibt gesperrt", async () => {
+    const { b } = await afterReplace();
+    await b.store.refresh();
+    expect(await b.store.adopt(await contentAt(CHAIN, 0))).toEqual({ ok: false, reason: "key-replaced" });
+    expect(b.memory.reason()).toBe("key-replaced");
+  });
+
+  // ── K5: die Geräte-ID im Kopf muss zum Dateinamen passen ──
+
+  it("(K5) eine umbenannte Gerätedatei zählt nicht: Befund bad-content, ihr Inhalt kommt nicht in die Tabelle", async () => {
+    const fs = new FakeFs(FOLDER);
+    const a = await readyDevice(fs, "dev-a", twoPersons());
+    const b = await readyDevice(fs, "dev-b", twoPersons());
+    await b.store.persist(personTable(ID_C, CARLA, sampleTable()));
+    const bytes = fs.get(`dev-b${EXT}`) ?? new Uint8Array();
+    fs.put(`dev-x${EXT}`, bytes);
+    await fs.adapter.remove(fs.path(`dev-b${EXT}`));
+    await a.store.refresh();
+    expect(nameOf(a.memory.table(), ID_C)).toBeUndefined();
+    expect(a.store.problems().some((p) => p.kind === "bad-content" && p.deviceId === "dev-x")).toBe(true);
+  });
+
+  it("(K5) eine umbenannte fremde Abschlussdatei gilt weder als Abschluss noch als eigene: b sperrt sich nicht, a heilt nichts", async () => {
+    const fs = new FakeFs(FOLDER);
+    const a = await readyDevice(fs, "dev-a", twoPersons());
+    const b = await readyDevice(fs, "dev-b", twoPersons());
+    expect(await a.store.replaceKey(newContent())).toEqual({ ok: true });
+    // Die Abschlussdatei von a unter dem Namen einer Abschlussdatei von b.
+    const closingB = closingDeviceId("dev-b", hex(CHAIN.chainId));
+    fs.put(`${closingB}${EXT}`, fs.get(CLOSING_FILE) ?? new Uint8Array());
+    await fs.adapter.remove(fs.path(CLOSING_FILE));
+    await b.store.refresh();
+    expect(b.memory.state()).toBe("ready");
+    expect(b.store.problems().some((p) => p.kind === "bad-content")).toBe(true);
+  });
+
+  it("(K5) eine fremde Abschlussdatei unter dem eigenen Namen wird nicht geheilt (gelöscht), auch wenn eine Marke für die Kette steht", async () => {
+    const fs = new FakeFs(FOLDER);
+    const a = await readyDevice(fs, "dev-a", twoPersons());
+    const b = await readyDevice(fs, "dev-b", twoPersons());
+    expect(await b.store.replaceKey(newContent())).toEqual({ ok: true });
+    const closingB = closingDeviceId("dev-b", hex(CHAIN.chainId));
+    const closingA = closingDeviceId("dev-a", hex(CHAIN.chainId));
+    fs.put(`${closingA}${EXT}`, fs.get(`${closingB}${EXT}`) ?? new Uint8Array());
+    await fs.adapter.remove(fs.path(`${closingB}${EXT}`));
+    a.pending.current = hex(CHAIN.chainId);
+    await a.store.refresh();
+    expect(fs.names()).toContain(`${closingA}${EXT}`);
+    expect(a.store.problems().some((p) => p.kind === "bad-content")).toBe(true);
   });
 });

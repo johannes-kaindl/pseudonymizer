@@ -106,6 +106,8 @@ export interface Device {
   keyReads: Uint8Array[];
   /** Der Name dieses Geräts, wie ihn das Plugin aus dem Gerätezustand liest; ein Test ändert ihn, um die Umbenennung zu spielen. */
   name: { current: string };
+  /** Die geräteeigene Marke „Schlüssel ersetzen läuft“ (lokaler Speicher des Geräts); ein Neustart desselben Geräts reicht dieselbe Hülle weiter. */
+  pending: { current: string | null };
 }
 
 export interface DeviceOptions {
@@ -119,6 +121,8 @@ export interface DeviceOptions {
   /** Wählt `writeOwn` und `replaceDamagedOwn` zum Eingreifen (Verzögern, Scheitern). */
   wrapFiles?: (files: DeviceFiles, log: string[]) => DeviceFiles;
   keyWriteFails?: boolean;
+  /** Die Marke dieses Geräts; ein Neustart (`makeDevice` mit demselben Schlüsselbund) übernimmt sie. */
+  pending?: { current: string | null };
 }
 
 export function makeDevice(fs: FakeFs, o: DeviceOptions): Device {
@@ -156,15 +160,17 @@ export function makeDevice(fs: FakeFs, o: DeviceOptions): Device {
   const reports: FileProblem[] = [];
   const wiped: ChainState[] = [];
   const name = { current: o.name ?? o.deviceId };
+  const pending = o.pending ?? { current: null };
   const opts: TableStoreOptions = {
     files,
     closingFiles: (id) => createDeviceFiles({ folder: FOLDER, extension: EXT, deviceId: id, ports: manual.ports() }),
     keys,
     memory,
     deviceName: () => name.current,
+    replacePending: { read: () => pending.current, write: (c) => { pending.current = c; } },
     defaultLanguage: () => o.language ?? "de",
     onProblem: (p) => { reports.push(p); },
     ratchet: { advance, advanceTo, encryptionKey, wipe: (s) => { wiped.push(s); wipe(s); }, maxJump: RATCHET_MAX_JUMP },
   };
-  return { id: o.deviceId, store: createTableStore(opts), memory, secrets, keys, files, manual, reports, log, wiped, keyReads, name };
+  return { id: o.deviceId, store: createTableStore(opts), memory, secrets, keys, files, manual, reports, log, wiped, keyReads, name, pending };
 }

@@ -25,7 +25,12 @@
 //    vor der neuen Fassung, weil ein Erfolg kein Gerät ungesperrt lassen darf; scheitert danach die neue Fassung, nimmt das Gerät sie zurück, damit kein Abbruch ein Gerät grundlos sperrt.
 //    Sie ist kein Gerät (Geräteliste, Befunde, „Gerät entfernen“). Das ersetzende Gerät räumt sie weg, sobald keine andere Datei der alten Kette mehr im Ordner liegt.
 //    Stürzt es zwischen Abschlussdatei und neuer Fassung ab, heilt es sich selbst: findet es beim Auffrischen nur seine EIGENE Abschlussdatei, hält der Schlüsselbund noch die alte Kette und liegt keine eigene Datei
-//    einer neuen Kette im Ordner, löscht es die Abschlussdatei und bleibt bereit (die anderen entsperren beim nächsten Auffrischen). Eine fremde Abschlussdatei sperrt weiter.
+//    einer neuen Kette im Ordner UND trägt dieses Gerät die Marke `replacePending` für genau diese Kette (gesetzt vor der Abschlussdatei, gelöscht nach dem Ablegen des neuen Schlüssels; W2), löscht es die
+//    Abschlussdatei und die Marke und bleibt bereit (die anderen entsperren beim nächsten Auffrischen). Eine fremde Abschlussdatei sperrt weiter. Ohne Marke heilt nichts: ein zurückgeholter alter Code erzeugt
+//    denselben Ordnerzustand, und dann wäre das Ersetzen für alle Geräte stillschweigend rückgängig. Aus demselben Grund lehnt `adopt` einen Code ab, unter dessen Kette eine mit ihm lesbare Abschlussdatei liegt
+//    (`key-replaced`, nichts gespeichert).
+// 11. **Geräte-ID aus dem authentisierten Kopf** (K5): der Dateiname sagt, wem eine Datei gehört, aber erst der Kopf beweist es. Stimmen beide nicht überein (umbenannte Datei), ist es ein Befund `bad-content` und die Datei
+//    zählt weder als Gerät noch als Abschlussdatei.
 // 9. **Der alte Kettenzustand wird geleert** (`wipe`), sobald der neue im Schlüsselbund steht. Jeder Zustand, den ein Lauf ableitet, wird am Ende des Laufs geleert, auch bei einem Fehler.
 //
 // Kein Klartext in Meldungen: `FileProblem` trägt Art, Geräte-ID und Dateipfad (der Name der Datei ist die Geräte-ID), nie Inhalt, Namen oder Schlüsselmaterial.
@@ -95,6 +100,9 @@ export interface TableStoreOptions {
   memory: MemoryTable;
   /** Name dieses Geräts für „Geräte und Schlüssel“; geht bei jedem Schreiben in die Gerätedatei. */
   deviceName(): string;
+  /** Geräteeigene Marke „Schlüssel ersetzen läuft“ (Sicherheits-Lesung Runde 1, W2): die Kennung der alten Kette (hex). Gesetzt vor der Abschlussdatei, gelöscht nach dem Ablegen des neuen Schlüssels oder
+   *  dem sauberen Zurücknehmen. Nur mit ihr heilt sich das ersetzende Gerät (Regel 10); ein Ordnerzustand allein reicht nicht, ihn erzeugt auch ein zurückgeholter alter Code. Liegt nur auf diesem Gerät, nie im Vault. */
+  replacePending: { read(): string | null; write(chainId: string | null): void };
   /** Sprache der Platzhalter, wenn noch keine Gerätedatei eine nennt (Spec 8.1). */
   defaultLanguage(): PlaceholderLanguage;
   /** Meldet ein Problem einmal, solange es besteht. */
@@ -109,7 +117,7 @@ export type TableChange = PlaceholderTable | ((current: PlaceholderTable) => Pla
 export type PersistResult = void | { error: "locked" | "not-ready" | "storage-failed" };
 
 /** Warum ein eingegebener Code nichts öffnet oder nichts gespeichert wurde. Die Gründe des Zustands (Spec 8.3) plus die beiden Schreibfehler. */
-export type AdoptFailure = Extract<LockReason, "table-missing" | "unreadable" | "foreign-chain" | "key-opens-nothing"> | "storage-failed" | "key-write-failed";
+export type AdoptFailure = Extract<LockReason, "table-missing" | "unreadable" | "foreign-chain" | "key-opens-nothing" | "key-replaced"> | "storage-failed" | "key-write-failed";
 /** Ergebnis von `adopt`: bei einem Fehlschlag ist der Schlüsselbund unberührt (außer bei `key-write-failed`, dort ist die Datei geschrieben und der Schlüssel nicht abgelegt). */
 export type AdoptResult = { ok: true } | { ok: false; reason: AdoptFailure };
 /** Ergebnis von `setUp`: `already-set-up` heißt, dieses Gerät ist bereit und es wurde nichts geschrieben. */
@@ -279,6 +287,8 @@ export function createTableStore(o: TableStoreOptions): TableStore {
     // 1. Jede Datei einordnen: Kopf lesen. Was nicht einmal einen Kopf hat, wird gemeldet und bleibt liegen.
     const heads: { entry: ReadEntry; head: FileHead }[] = [];
     const closingHeads: { entry: ReadEntry; head: FileHead }[] = [];
+    // Die Geräte-ID im Kopf je Datei (K5): der Dateiname sagt, wem sie gehört, der Kopf (nach dem Öffnen authentisiert) muss es bestätigen.
+    const headerIds = new Map<string, string>();
     for (const e of read.entries) {
       const closing = isClosingEntry(e);
       const who = closing ? null : e.deviceId;
@@ -291,6 +301,7 @@ export function createTableStore(o: TableStoreOptions): TableStore {
         problems.push({ kind: h.reason === "version" ? "newer-format" : "unreadable-header", deviceId: who, path: e.path });
         continue;
       }
+      headerIds.set(e.path, h.header.deviceId);
       (closing ? closingHeads : heads).push({ entry: e, head: { deviceId: e.deviceId, chainId: toHex(h.header.chainId), stand: h.header.stand } });
     }
 
@@ -348,6 +359,7 @@ export function createTableStore(o: TableStoreOptions): TableStore {
         if (ck === undefined) { bad("authentication"); continue; }
         const r = await openEnvelope(ck, h.entry.bytes);
         if (!r.ok) { bad(r.reason === "truncated" ? "bad-content" : "authentication"); continue; }
+        if (headerIds.get(h.entry.path) !== h.entry.deviceId) { bad("bad-content"); continue; }
         const p = decodePayload(r.plaintext);
         if ("error" in p) { bad(p.error === "version" ? "newer-format" : "bad-content"); continue; }
         const t = typeof p.table === "string" ? parseTable(p.table) : null;
@@ -366,6 +378,7 @@ export function createTableStore(o: TableStoreOptions): TableStore {
         if (ck === undefined) { bad("authentication"); continue; }
         const r = await openEnvelope(ck, h.entry.bytes);
         if (!r.ok) { bad(r.reason === "truncated" ? "bad-content" : "authentication"); continue; }
+        if (headerIds.get(h.entry.path) !== h.entry.deviceId) { bad("bad-content"); continue; }
         const c = decodeClosing(r.plaintext);
         if ("error" in c) { bad(c.error === "version" ? "newer-format" : "bad-content"); continue; }
         closings++;
@@ -383,10 +396,14 @@ export function createTableStore(o: TableStoreOptions): TableStore {
     // Kette im Ordner, ist das Ersetzen zwischen Abschlussdatei und neuer Fassung abgebrochen (Absturz, Neustart): die Datei geht weg, das Gerät bleibt bereit, die anderen entsperren beim nächsten
     // Auffrischen. Scheitert das Löschen, bleibt das Gerät trotzdem bereit; der nächste Lauf holt es nach. Eine fremde Abschlussdatei sperrt weiter, auch neben einer eigenen.
     let closings = main.closings;
-    if (adoptRun === null && closings > 0 && main.ownClosings.length === closings && !heads.some((h) => h.head.deviceId === ownId && h.head.chainId !== own.chainId)) {
-      for (const id of main.ownClosings) await files.removeForeign(id);
+    if (adoptRun === null && closings > 0 && main.ownClosings.length === closings && o.replacePending.read() === own.chainId && !heads.some((h) => h.head.deviceId === ownId && h.head.chainId !== own.chainId)) {
+      let allGone = true;
+      for (const id of main.ownClosings) if (!(await files.removeForeign(id)).ok) allGone = false;
+      if (allGone) o.replacePending.write(null);
       closings = 0;
     }
+    // Ein eingegebener Code, den eine Abschlussdatei seiner Kette sperrt, ist ersetzt: nichts gespeichert (W2 b). Sonst höbe das ersetzende Gerät mit dem alten Code das Ersetzen für alle auf.
+    if (adoptRun !== null && closings > 0) return failAdopt("key-replaced");
     if (adoptRun === null && closings > 0) {
       const st = deriveStatus({
         deviceFiles: deviceEntries.length, readableHeads: heads.length, hasKey: true, keyCorrupt: false,
@@ -548,9 +565,12 @@ export function createTableStore(o: TableStoreOptions): TableStore {
           return failAdopt("storage-failed");
         }
         const id = closingDeviceId(ownId, toHex(oldState.chainId));
+        // Die Marke vor der Abschlussdatei: nur mit ihr heilt sich dieses Gerät, falls es dazwischen abbricht (W2 a).
+        o.replacePending.write(toHex(oldState.chainId));
         const closing = await sealEnvelope(oldKey.value, { deviceId: id, chainId: oldState.chainId, stand: oldState.stand }, encodeClosing());
         const cw = closing.ok ? await o.closingFiles(id).writeOwn(closing.bytes) : null;
         if (cw === null || !cw.ok) {
+          o.replacePending.write(null);
           problems.push({ kind: "write-failed", deviceId: null, path: files.ownPath });
           return failAdopt("storage-failed");
         }
@@ -562,7 +582,8 @@ export function createTableStore(o: TableStoreOptions): TableStore {
       const w = setAside ? await files.replaceDamagedOwn(sealed.bytes) : await files.writeOwn(sealed.bytes);
       if (!w.ok) {
         // Kein Abbruch sperrt ein Gerät grundlos: die Abschlussdatei geht wieder weg (scheitert auch das, bleibt der nächste Schlüsselwechsel der Ausweg und der Befund steht da).
-        if (closingId !== null) await files.removeForeign(closingId);
+        // Nur das saubere Zurücknehmen löscht auch die Marke: bleibt die Abschlussdatei liegen (Absturz), braucht die Heilung sie.
+        if (closingId !== null && (await files.removeForeign(closingId)).ok) o.replacePending.write(null);
         problems.push({ kind: "write-failed", deviceId: ownId, path: files.ownPath });
         return failAdopt("storage-failed");
       }
@@ -578,6 +599,8 @@ export function createTableStore(o: TableStoreOptions): TableStore {
     if (fileOk && (adoptRun !== null || replaceWith !== null || content.stand < finalStand)) {
       const kw = keys.write({ chainId: finalState.chainId, stand: finalStand, key: finalState.chainKey });
       if (kw !== undefined) { problems.push({ kind: "key-write-failed", deviceId: ownId, path: files.ownPath }); keyFailed = true; }
+      // Das Ersetzen ist durchgeführt (die neue Fassung steht, der Schlüssel ist abgelegt oder der Code führt zu ihr): die Marke hat ihren Zweck erfüllt.
+      if (replaceWith !== null) o.replacePending.write(null);
     }
 
     if (fileOk) memory.open(next, { stand: finalStand, language, devices: devicesOf(next, ownView(finalStand)), codeStand: maxOrNull(openedCodeStand, maxOrNull(codeShown, replaceWith !== null ? null : ownOpened?.payload.device.codeShownAtStand ?? null)) });

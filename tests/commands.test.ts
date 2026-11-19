@@ -106,7 +106,7 @@ function makeHost(state: PluginState = "ready", over: { copyMode?: "placeholder"
   const host: CommandHost = {
     app: { workspace: { getActiveViewOfType: () => (over.editor ? { editor: {} } : null) } } as unknown as CommandHost["app"],
     settings,
-    device: { get showPlaintext() { return shown; }, setShowPlaintext: (on: boolean) => { shown = on; store.set("x", on); }, deviceName: "d", setDeviceName: () => undefined },
+    device: { get showPlaintext() { return shown; }, setShowPlaintext: (on: boolean) => { shown = on; store.set("x", on); }, deviceName: "d", setDeviceName: () => undefined, replacePending: null, setReplacePending: () => undefined },
     memory: new MemoryTable(),
     api: { restore: () => ({ error: "locked", message: "the table is locked" }) },
     state: () => state,

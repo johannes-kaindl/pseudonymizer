@@ -4,6 +4,7 @@ import { DEVICE_KEY_PREFIX } from "../core/constants";
 
 export const KEY_SHOW_PLAINTEXT = `${DEVICE_KEY_PREFIX}show-plaintext`;
 export const KEY_DEVICE_NAME = `${DEVICE_KEY_PREFIX}device-name`;
+export const KEY_REPLACE_PENDING = `${DEVICE_KEY_PREFIX}replace-pending`;
 
 export interface DeviceState {
   /** Klartext zeigen: je Gerät, nicht synchronisiert (Spec 8.6, Setzung 4). Ohne gespeicherten Wert an. */
@@ -12,6 +13,9 @@ export interface DeviceState {
   /** Lesbarer Name für „Geräte und Schlüssel“; ohne gespeicherten Wert `Desktop-xxxx` oder `Mobile-xxxx`, danach stabil. */
   readonly deviceName: string;
   setDeviceName(name: string): void;
+  /** Marke „Schlüssel ersetzen läuft“: die Kennung der alten Kette (hex), solange die Abschlussdatei liegt und der neue Schlüssel noch nicht abgelegt ist; sonst `null`. Nur die Heilung der eigenen Abschlussdatei liest sie. */
+  readonly replacePending: string | null;
+  setReplacePending(chainId: string | null): void;
 }
 
 type RandomFill = (array: Uint16Array) => Uint16Array;
@@ -35,5 +39,11 @@ export function createDeviceState(app: App, getRandomValues: RandomFill = (a) =>
       return generated;
     },
     setDeviceName: (name) => { write(KEY_DEVICE_NAME, name.trim() === "" ? null : name.trim()); },
+    get replacePending(): string | null {
+      const v = read(KEY_REPLACE_PENDING);
+      return typeof v === "string" && v !== "" ? v : null;
+    },
+    // Als Text gespeichert, nie als Boolean (siehe oben); `null` löscht.
+    setReplacePending: (chainId) => { write(KEY_REPLACE_PENDING, chainId); },
   };
 }

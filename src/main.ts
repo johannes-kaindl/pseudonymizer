@@ -181,6 +181,7 @@ export default class PseudonymizerPlugin extends Plugin {
       keys: this.keys,
       memory: this.memory,
       deviceName: () => this.device.deviceName,
+      replacePending: { read: () => this.device.replacePending, write: (chainId) => { this.device.setReplacePending(chainId); } },
       defaultLanguage: () => this.defaultPlaceholderLanguage(),
       onProblem: (p) => { announceProblem(p); },
     });

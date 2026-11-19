@@ -96,3 +96,16 @@ describe("device state: device name", () => {
     expect([...f.store.keys()].every((k) => k.startsWith("pseudonymizer-"))).toBe(true);
   });
 });
+
+describe("device state: replace-pending mark (W2)", () => {
+  it("is null without a value, stored as text under a plugin-prefixed key, and cleared by null", () => {
+    const f = obsidianLikeApp();
+    const d = createDeviceState(f.app);
+    expect(d.replacePending).toBeNull();
+    d.setReplacePending("abcd0123");
+    expect(f.store.get("pseudonymizer-replace-pending")).toBe("abcd0123");
+    expect(createDeviceState(f.app).replacePending).toBe("abcd0123");
+    d.setReplacePending(null);
+    expect(createDeviceState(f.app).replacePending).toBeNull();
+  });
+});
