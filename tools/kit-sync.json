@@ -34,7 +34,9 @@
         "folder-suggest",
         "segmented-control",
         "status-bar-item",
-        "confirm"
+        "confirm",
+        "hub",
+        "status-indicator"
       ],
       "rewrite": [
         [

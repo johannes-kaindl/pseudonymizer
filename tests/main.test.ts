@@ -28,6 +28,46 @@ describe("PseudonymizerPlugin", () => {
     plugin.engine = { ...plugin.engine, state: () => "ready" } as Engine;
     expect(plugin.api.status()).toEqual({ state: "ready" });
   });
+  it("registers the view, thirteen commands with icons and a status bar entry", async () => {
+    const { plugin } = load();
+    await plugin.onload();
+    const p = plugin as unknown as { views: Record<string, unknown>; commands: { id: string; icon: string }[] };
+    expect(Object.keys(p.views)).toEqual(["pseudonymizer-view"]);
+    expect(p.commands).toHaveLength(13);
+    expect(p.commands.every((c) => c.icon)).toBe(true);
+    expect((plugin as unknown as { statusBar: { item: { shown: boolean } } }).statusBar.item.shown).toBe(true);
+  });
+  it("the status bar switch in the settings removes and restores the entry", async () => {
+    const { plugin } = load();
+    await plugin.onload();
+    const bar = (plugin as unknown as { statusBar: { item: { shown: boolean } } }).statusBar;
+    plugin.settings.statusBar = false;
+    await plugin.saveSettings();
+    expect(bar.item.shown).toBe(false);
+    plugin.settings.statusBar = true;
+    await plugin.saveSettings();
+    expect(bar.item.shown).toBe(true);
+  });
+  it("the toggle command repaints the status bar", async () => {
+    const { plugin } = load();
+    await plugin.onload();
+    const bar = (plugin as unknown as { statusBar: { item: { el: { querySelector(s: string): { getAttribute(a: string): string | null } } } } }).statusBar;
+    plugin.state = () => "ready";
+    plugin.emitChange();
+    expect(bar.item.el.querySelector("button").getAttribute("aria-pressed")).toBe("true");
+    plugin.run("toggle-plaintext");
+    expect(plugin.device.showPlaintext).toBe(false);
+    expect(bar.item.el.querySelector("button").getAttribute("aria-pressed")).toBe("false");
+  });
+  it("unload stops listening", async () => {
+    const { plugin } = load();
+    await plugin.onload();
+    let n = 0;
+    plugin.onChange(() => { n++; });
+    plugin.onunload();
+    plugin.emitChange();
+    expect(n).toBe(0);
+  });
   it("saveSettings persists only the settings", async () => {
     const { plugin, store } = load();
     await plugin.onload();

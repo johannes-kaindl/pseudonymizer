@@ -25,6 +25,83 @@
 /* Tippfläche mindestens 44 px am Telefon (UI-STANDARD). */
 .is-mobile .okit-segmented-btn { min-height: var(--size-4-11); }
 
+/* Kit: hub (obsidian-kit 0.99.1) */
+/* Hub-Tab-Leiste (obsidian-kit: buildHubInto). Die vier nummerierten Zutaten gehören
+   zusammen — jede einzeln ist wirkungslos, s. Modulkopf von src/obsidian/hub.ts. */
+.okit-hub-root { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.okit-hub-tabs {
+  display: flex;
+  flex-wrap: wrap;                 /* (1) erlaubt die zweite Zeile */
+  gap: var(--size-2-1);
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+/* box-shadow: none nimmt dem nativen <button> nur seinen Ruhe-Schatten. Obsidians
+   Fokusring bleibt: button:focus-visible { box-shadow: 0 0 0 3px … } hat mit (0,1,1) die
+   höhere Spezifität als .okit-hub-tab (0,1,0) — geprüft in Obsidians app.css. */
+.okit-hub-tab {
+  display: flex;
+  flex: 1 1 auto;                  /* (2) Basis = Inhaltsbreite, sonst bricht nichts um */
+  min-width: 0;                    /* (3) hebt min-width:auto auf, sonst sprengt ein langes Label die Zeile */
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-4-1);
+  padding: var(--size-2-3) var(--size-4-2);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.okit-hub-tab-label {              /* (4) ohne eigenes Label-Element kann nichts ellipsieren */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.okit-hub-tab-icon { display: inline-flex; flex: 0 0 auto; }
+.okit-hub-tab:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.okit-hub-tab.is-active { color: var(--text-normal); border-bottom-color: var(--interactive-accent); }
+.okit-hub-content { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
+.okit-hub-panel { height: 100%; overflow: auto; }
+.okit-hub-panel.is-hidden { display: none; }
+
+/* Kit: status-indicator (obsidian-kit 0.99.1) */
+.okit-status { display: flex; gap: var(--size-2-2); align-items: center; font-size: var(--font-ui-small); color: var(--text-muted); }
+.okit-status-icon { display: inline-flex; align-items: center; }
+.okit-status-icon svg { width: 14px; height: 14px; }
+.okit-status.is-ok .okit-status-icon { color: var(--text-success); }
+.okit-status.is-error .okit-status-icon { color: var(--text-error); }
+.okit-status.is-warning .okit-status-icon { color: var(--text-warning); }
+.okit-status.is-checking .okit-status-icon svg { animation: okit-status-spin 1.2s linear infinite; }
+@keyframes okit-status-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .okit-status.is-checking .okit-status-icon svg { animation: none; } }
+
+/* Eintrag in der Statusleiste: ein echter Knopf (Tastatur, Fokus), Text UND Symbol. */
+.pseu-status-btn {
+  display: inline-flex; align-items: center; gap: var(--size-2-2);
+  margin: 0; padding: 0 var(--size-2-2); height: auto;
+  border: 0; border-radius: var(--radius-s); box-shadow: none;
+  background: transparent; color: inherit; font: inherit; cursor: var(--cursor);
+}
+.pseu-status-btn:hover { background: var(--background-modifier-hover); }
+.pseu-status-btn:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+.pseu-status-icon { display: inline-flex; align-items: center; }
+.pseu-status-icon svg { width: 14px; height: 14px; }
+/* Gedrückt unterscheidet sich im Symbol und im Text, nicht nur durch die Fläche. */
+.pseu-status-btn[aria-pressed="true"] { color: var(--text-normal); }
+
+/* Ansicht: Zustandszeile oben, darunter Leerzustand. */
+.pseu-panel { padding: var(--size-4-2); display: flex; flex-direction: column; gap: var(--size-4-3); }
+.pseu-empty {
+  display: flex; flex-direction: column; gap: var(--size-4-2); align-items: flex-start;
+  color: var(--text-muted);
+}
+.pseu-empty-actions { display: flex; flex-wrap: wrap; gap: var(--size-4-2); }
+/* Tippfläche mindestens 44 px am Telefon (UI-STANDARD). */
+.is-mobile .pseu-empty-actions button { min-height: var(--size-4-11); }
+
 .pseu-note {
   color: var(--text-muted);
   font-size: var(--font-ui-small);
