@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeFs } from "./helpers/fake-fs";
 import { sampleTable } from "./helpers/table-fixtures";
 import {
-  CHAIN, EXT, FOLDER, ID_A, ID_B, OTHER_CHAIN, contentAt, forgetIn, makeDevice, personTable, seedFile, stateAt, type Chain, type Device,
+  CHAIN, EXT, FOLDER, ID_A, ID_B, ID_C, OTHER_CHAIN, contentAt, forgetIn, makeDevice, personTable, seedFile, stateAt, type Chain, type Device,
 } from "./helpers/store-fixtures";
 import { decodeRecoveryCode } from "../src/vendor/kit/recovery-code";
 import { openEnvelope, readEnvelopeHeader } from "../src/vendor/kit/key-envelope";
@@ -91,7 +91,7 @@ describe("forget: Person vergessen (Spec 8.3 Punkt 2)", () => {
 
   it("eine Einzelfall-Entscheidung zu einem Wert der Person („im Klartext lassen“), die nach dem Anlegen fiel, geht mit: die Fassung wird nicht mit dem Stand davor vereinigt", async () => {
     const fs = new FakeFs(FOLDER);
-    const d = tableSetPlain(twoPersons(), "mail.md", MAX, true);
+    const d = tableSetPlain(twoPersons(), "mail.md", MAX, true, { id: ID_C });
     if (!d.ok) throw new Error("fixture");
     const a = await readyDevice(fs, "dev-a", d.table, 0);
     expect(await a.store.forget(ID_A)).toEqual({ ok: true, stand: 1 });

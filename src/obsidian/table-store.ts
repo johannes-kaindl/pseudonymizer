@@ -45,6 +45,7 @@ import {
   mergeTables,
   parseTable,
   serializeTable,
+  tableBindDecisions,
   tableForget,
   tableForgotten,
   type PlaceholderTable,
@@ -417,7 +418,9 @@ export function createTableStore(o: TableStoreOptions): TableStore {
 
     // 6. Vereinigen: der Arbeitsspeicher bleibt, was er war, und bekommt dazu, was die Dateien wissen.
     const previous = memory.table();
-    const base = mergeAllTables([...(previous === null ? [] : [previous]), ...opened.map((x) => x.table), ...carried.map((x) => x.table)]);
+    // Pflicht des Aufrufers (code-kit 0.84.0): nach dem Lesen fremder Fassungen genau einmal `tableBindDecisions` auf das Ergebnis, bevor geschrieben wird; sonst nimmt eine später
+    // eintreffende Vergessen-Marke die Klartext-Entscheidungen („hier im Klartext lassen“) nicht mit.
+    const base = tableBindDecisions(mergeAllTables([...(previous === null ? [] : [previous]), ...opened.map((x) => x.table), ...carried.map((x) => x.table)]));
     const target = Math.max(...opened.map((x) => x.stand));
     const ownOpened = opened.find((x) => x.entry.deviceId === ownId);
     const ownCarried = carried.find((x) => x.entry.deviceId === ownId);
@@ -468,7 +471,7 @@ export function createTableStore(o: TableStoreOptions): TableStore {
       if (d === null) { ctx.noop = true; return undefined; }
       next = d;
     } else if (ctx.change !== undefined) {
-      next = mergeTables(base, typeof ctx.change === "function" ? ctx.change(base) : ctx.change);
+      next = tableBindDecisions(mergeTables(base, typeof ctx.change === "function" ? ctx.change(base) : ctx.change));
     }
     const nextText = serializeTable(next);
     const differs = ownOpened === undefined || ownOpened.stand !== target || serializeTable(ownOpened.table) !== nextText || ownOpened.payload.device.name !== o.deviceName();

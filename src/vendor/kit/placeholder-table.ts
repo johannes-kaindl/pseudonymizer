@@ -1,4 +1,4 @@
-// vendored from code-kit@0.82.0, src/ts/pure/placeholder-table.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from code-kit@0.86.1, src/ts/pure/placeholder-table.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 // Origin: new in code-kit (Welle 36, kp2c, order 5 of the pseudonymizer design, spec sections 8.1 to 8.3, released by Johannes 2026-11-18 22:44). Builds on
 // `placeholder.ts` (the grammar, `PlaceholderParts`, `PlaceholderResolution`, `restorePlaceholders`); it is the table behind the placeholders: who an ID
 // belongs to, which values and spellings it stands for, what was forgotten.
@@ -17,7 +17,10 @@
 //   redirect {id, field, n, to} the value of that slot was detached (spec 8.1 rule 2): it belongs to the entry `to` now, which holds its own copy as
 //                              (to, field, 1). A fact without a value, so it can stay when everything else of a forgotten entry goes.
 //   mark    {ids, keep}        a forgotten entry: all its IDs, and the IDs of detached values that stay. Names are never in a mark.
-//   exception / decision       a text the person wants left alone (everywhere / in one document), with a change counter.
+//   exception / decision       a text the person wants left alone (everywhere / in one document), with a change counter. A decision has a random ID of
+//                              its own (`sid`, drawn by the caller like an entry ID).
+//   bind    {sid, anchor}      the decision `sid` concerns the entry `anchor`. A fact without a text, like `redirect`, and never removed: it is what lets every
+//                              device drop the text of a decision when the entry is forgotten, in whatever order the versions meet (Welle 36, review E1).
 //
 // DERIVED, never stored: the forgotten set, the groups of entries, the look-ups.
 //
@@ -34,6 +37,18 @@
 //   forgotten still comes back in the old notes; if the new entry is forgotten, so is the old slot.
 //   Slots. A slot (id, field, n) with two different values (two devices added a second spelling at the same time) is a CONFLICT: it resolves to
 //   nothing, never to a guess, and `tableConflicts` lists it. `tableAddValue` never reuses a conflicting slot.
+//
+//   Decisions. A decision is dropped as soon as ANY entry it is bound to is forgotten (monotone: the forgotten set and the binds only grow). It is bound to
+//   the holders of its text when it is made, to the entry that gets the text later (`tableAddValue`), to the new entry when the value is detached, and by
+//   the device that forgets, when the decision was bound to nobody (that device still knows the values). A decision on a device that never saw a bind
+//   and a mark together keeps its text: a mark carries no names (pinned limit).
+//   The caller's duty: after every reading of another device's version (`mergeTables`, `mergeAllTables`) it runs `tableBindDecisions` on the result, once, before it
+//   writes the table. The union cannot bind (it would stop being associative); the device can, because decision and holder meet in ITS table. Without the call a
+//   mark that arrives later does not take the decision. The call also makes a bound decision follow a redirect of its anchor when the copy at the target holds its
+//   text (review round 2, R1: one device decided about a form of M while another detached that form to N; without it the name stayed after N was forgotten).
+//   It does NOT bind to every holder of the text: that would take the decision of a person who stays when the other one is forgotten (review B7).
+//   Detached slots. The values of a slot whose redirect leads to a forgotten entry are dropped too: the text of a detached value must not stay under its old
+//   place. A slot that was detached AND holds two values (another device filled the same slot at the same time) is a conflict, like any slot with two values.
 //
 // Notes and decisions: the one with the higher change counter wins (the counter of an item is its highest seen value plus one, not the clock); at the
 // same counter the removal wins, then the smaller text. So a concurrent edit errs on the side of pseudonymizing.
@@ -101,14 +116,16 @@ export interface TableNote {
   readonly removed: boolean;
 }
 
-/** A decision for one document ("leave this in the clear in this mail"). One record per (document, form, anchor): the anchor is the ID of an entry that holds the
- *  form when the decision was made (or a value of that form was added later), or `""` when no entry did. A record is dropped with its anchor, by ID like a value, so a
- *  merge in any order cannot bring it back (a mark carries no names; matching by the name would not be associative, the property test showed it). What a decision
- *  means is the record with the highest counter over all anchors of (document, form). */
+/** A decision for one document ("leave this in the clear in this mail"). A record is identified by its random `sid`, the document and the normalized form. What
+ *  a decision means is, per (document, form), the record with the highest counter over all `sid`s (then the removal, the smaller text, the smaller `sid`).
+ *  Which entries it concerns is not in the record but in the {@link TableBind}s: the text of the record is dropped as soon as one of them is forgotten. */
 export interface DocumentNote extends TableNote {
+  readonly sid: string;
   readonly doc: string;
-  readonly anchor: string;
 }
+
+/** The decision `sid` concerns the entry `anchor`. Holds no text, so it can stay when the text of a forgotten entry is gone. */
+export type TableBind = readonly [sid: string, anchor: string];
 
 /** The table. Plain data, deeply frozen, always in canonical order; build it only through this module's functions. */
 export interface PlaceholderTable {
@@ -119,6 +136,7 @@ export interface PlaceholderTable {
   readonly marks: readonly ForgetMark[];
   readonly exceptions: readonly TableNote[];
   readonly decisions: readonly DocumentNote[];
+  readonly binds: readonly TableBind[];
 }
 
 export type TableError =
@@ -159,7 +177,7 @@ const FIELDS: readonly PlaceholderField[] = ["mail", "phone", "address", "iban"]
 const FIELD_ORDER = new Map<string, number>([["", 0], ["mail", 1], ["phone", 2], ["address", 3], ["iban", 4]]);
 const KIND_RANK: Readonly<Record<EntryKind, number>> = { none: 0, organisation: 1, person: 2 };
 const FORMAT = "placeholder-table";
-const VERSION = 1;
+const VERSION = 2; // 1 (code-kit 0.82.0): decisions with an anchor each, no binds; read as "version", never half
 const MAX_N = 99;
 
 // ---- normalizing ------------------------------------------------------------------------------
@@ -201,6 +219,7 @@ interface Draft {
   marks: Map<string, ForgetMark>;
   exceptions: Map<string, TableNote>;
   decisions: Map<string, DocumentNote>;
+  binds: Map<string, TableBind>;
 }
 
 function push<K, V>(m: Map<K, V[]>, k: K, v: V): void {
@@ -218,10 +237,11 @@ const slotKey = (id: string, field: PlaceholderField | null, n: number): string 
 const formKey = (field: PlaceholderField | null, key: string): string => `${field ?? ""}|${key}`;
 const linkKey = (a: string, b: string): string => `${a}|${b}`;
 const markKey = (m: ForgetMark): string => JSON.stringify([m.ids, m.keep]);
-const decisionKey = (doc: string, key: string, anchor: string): string => JSON.stringify([doc, key, anchor]);
+const decisionKey = (sid: string, doc: string, key: string): string => JSON.stringify([sid, doc, key]);
+const bindKey = (sid: string, anchor: string): string => `${sid}|${anchor}`;
 
 function emptyDraft(): Draft {
-  return { entries: new Map(), links: new Map(), values: new Map(), redirects: new Map(), marks: new Map(), exceptions: new Map(), decisions: new Map() };
+  return { entries: new Map(), links: new Map(), values: new Map(), redirects: new Map(), marks: new Map(), exceptions: new Map(), decisions: new Map(), binds: new Map() };
 }
 
 const NO_SOURCES: readonly string[] = Object.freeze([]);
@@ -261,12 +281,23 @@ function winner<T extends TableNote>(a: T | undefined, b: T): T {
   return a.text <= b.text ? a : b;
 }
 
+/** Like {@link winner}, and at last the smaller `sid`: records of different lineages for one (document, form) must have a total order too. */
+function docWinner(a: DocumentNote | undefined, b: DocumentNote): DocumentNote {
+  if (a === undefined) return b;
+  if (a.counter !== b.counter || a.removed !== b.removed || a.text !== b.text) return winner(a, b);
+  return a.sid <= b.sid ? a : b;
+}
+
 function mkNote(key: string, text: string, counter: number, removed: boolean): TableNote {
   return Object.freeze({ key, text, counter, removed });
 }
 
-function mkDocNote(doc: string, key: string, anchor: string, text: string, counter: number, removed: boolean): DocumentNote {
-  return Object.freeze({ doc, key, anchor, text, counter, removed });
+function mkDocNote(sid: string, doc: string, key: string, text: string, counter: number, removed: boolean): DocumentNote {
+  return Object.freeze({ sid, doc, key, text, counter, removed });
+}
+
+function addBind(d: Draft, sid: string, anchor: string): void {
+  if (!d.binds.has(bindKey(sid, anchor))) d.binds.set(bindKey(sid, anchor), Object.freeze([sid, anchor] as const));
 }
 
 function mkMark(ids: Iterable<string>, keep: Iterable<string>): ForgetMark {
@@ -292,9 +323,10 @@ function joinInto(d: Draft, t: PlaceholderTable): void {
   }
   for (const n of t.exceptions) d.exceptions.set(n.key, winner(d.exceptions.get(n.key), n));
   for (const n of t.decisions) {
-    const k = decisionKey(n.doc, n.key, n.anchor);
+    const k = decisionKey(n.sid, n.doc, n.key);
     d.decisions.set(k, winner(d.decisions.get(k), n));
   }
+  for (const [sid, anchor] of t.binds) addBind(d, sid, anchor);
 }
 
 /** The IDs that are forgotten: every ID in a mark, and every entry detached from a forgotten one, unless the mark of that source keeps it. A mark keeps a
@@ -333,13 +365,44 @@ function sortedValues<T>(m: ReadonlyMap<string, T>): readonly T[] {
   return Object.freeze(keys.map((k) => m.get(k) as T));
 }
 
+/** The slots whose value was detached to a forgotten entry, each with the forgotten entry it ends at (review E2). A value that was detached again follows the
+ *  copy: the slot (M, f, n) leads to N, whose copy (N, f, 1) leads to the forgotten O, so BOTH slots are gone, and the text stays under neither (review round 2,
+ *  chain M to N to O). A worklist over the reverse links, so every slot enters once: linear, and a cycle in a hand-written file cannot loop. */
+function goneSlotsOf(redirects: Iterable<TableRedirect>, forgotten: ReadonlySet<string>): Map<string, string> {
+  const gone = new Map<string, string>();
+  const viaCopy = new Map<string, TableRedirect[]>(); // slot of the copy -> the redirects whose copy it is
+  const queue: string[] = [];
+  for (const r of redirects) {
+    push(viaCopy, slotKey(r.to, r.field, 1), r);
+    if (forgotten.has(r.to)) {
+      const k = slotKey(r.id, r.field, r.n);
+      if (!gone.has(k)) { gone.set(k, r.to); queue.push(k); }
+    }
+  }
+  for (let k = queue.pop(); k !== undefined; k = queue.pop()) {
+    const owner = gone.get(k) as string;
+    for (const r of viaCopy.get(k) ?? []) {
+      const up = slotKey(r.id, r.field, r.n);
+      if (gone.has(up)) continue;
+      gone.set(up, owner);
+      queue.push(up);
+    }
+  }
+  return gone;
+}
+
 /** Drops what a mark forgets and writes the canonical, frozen table. Every function that returns a table ends here. */
 function finish(d: Draft): PlaceholderTable {
   const forgotten = forgottenOf(d.entries, d.marks.values());
   const values = new Map<string, TableValue>();
-  for (const [k, v] of d.values) if (!forgotten.has(v.id)) values.set(k, v);
+  // the slots whose value was detached to an entry that is forgotten: the text stays nowhere (review E2)
+  const goneSlots = goneSlotsOf(d.redirects.values(), forgotten);
+  for (const [k, v] of d.values) if (!forgotten.has(v.id) && !goneSlots.has(slotKey(v.id, v.field, v.n))) values.set(k, v);
+  // a decision dies with any entry it is bound to (review E1); the binds stay
+  const dead = new Set<string>();
+  for (const [sid, anchor] of d.binds.values()) if (forgotten.has(anchor)) dead.add(sid);
   const decisions = new Map<string, DocumentNote>();
-  for (const [k, n] of d.decisions) if (n.anchor === "" || !forgotten.has(n.anchor)) decisions.set(k, n);
+  for (const [k, n] of d.decisions) if (!dead.has(n.sid)) decisions.set(k, n);
   return Object.freeze({
     entries: sortedValues(d.entries),
     links: sortedValues(d.links),
@@ -348,6 +411,7 @@ function finish(d: Draft): PlaceholderTable {
     marks: sortedValues(d.marks),
     exceptions: sortedValues(d.exceptions),
     decisions: sortedValues(decisions),
+    binds: sortedValues(d.binds),
   });
 }
 
@@ -367,14 +431,16 @@ export function emptyTable(): PlaceholderTable {
 // ---- merging ----------------------------------------------------------------------------------
 
 /** The union of two versions: entries, links, values and marks of both; of two notes the winner; then whatever a mark forgets is dropped. Commutative,
- *  associative and idempotent; the result is the canonical form, so `serializeTable` of equal knowledge is equal text. */
+ *  associative and idempotent; the result is the canonical form, so `serializeTable` of equal knowledge is equal text. **Caller's duty:** when the other version
+ *  comes from another device, run {@link tableBindDecisions} on the result before writing it, or a mark that arrives later does not take the decisions. */
 export function mergeTables(a: PlaceholderTable, b: PlaceholderTable): PlaceholderTable {
   const d = draftOf(a);
   joinInto(d, b);
   return finish(d);
 }
 
-/** The union of any number of versions (`mergeTables` folded); the empty list gives the empty table. */
+/** The union of any number of versions (`mergeTables` folded); the empty list gives the empty table. Same duty as {@link mergeTables}: after reading the versions of
+ *  other devices, run {@link tableBindDecisions} on the result before writing it. */
 export function mergeAllTables(tables: readonly PlaceholderTable[]): PlaceholderTable {
   const d = emptyDraft();
   for (const t of tables) joinInto(d, t);
@@ -427,6 +493,11 @@ function indexOf(t: PlaceholderTable): Index {
     for (const v of t.values) {
       const tk = `${v.id}|${v.field ?? ""}`;
       if (v.n > (out.get(tk) ?? 0)) out.set(tk, v.n);
+    }
+    // a detached slot whose text was dropped (its new entry was forgotten) still counts: the number is never given out twice
+    for (const r of t.redirects) {
+      const tk = `${r.id}|${r.field ?? ""}`;
+      if (r.n > (out.get(tk) ?? 0)) out.set(tk, r.n);
     }
     return out;
   });
@@ -503,6 +574,10 @@ function detailIn(idx: Index, p: PlaceholderParts): TableLookup {
   if (entry.kind !== (p.carrier ?? "none") || (p.carrier === null && p.field === null)) return { status: "unknown", reason: "carrier" };
   const slot = slotKey(p.id, p.field, p.n);
   const targets = idx.redirects.get(slot);
+  const own = idx.slots.get(slot);
+  // detached AND filled again: another device put a value into the old place while this one moved the old value away. Which one the placeholder means is
+  // not known, so it is a conflict and never the value of the detached copy (review E3)
+  if (targets !== undefined && own !== undefined && own.length > 1) return { status: "conflict", values: own.map((v) => v.text).sort(cmp) };
   if (targets !== undefined) {
     // detached: the value is the copy under the new ID(s); forgotten as soon as one of them is, known when they agree
     const texts = new Set<string>();
@@ -564,7 +639,13 @@ export function tableEntry(table: PlaceholderTable, id: string): EntryView | und
   const ids = (idx.group().get(id) ?? [id]).filter((x) => !idx.forgotten.has(x));
   const values: { value: TableValue; placeholder: PlaceholderParts; conflict: boolean }[] = [];
   if (!forgotten) {
-    for (const v of table.values) if (!idx.redirects.has(slotKey(v.id, v.field, v.n)) && ids.includes(v.id)) values.push({ value: v, placeholder: partsOf(idx, v), conflict: (idx.slots.get(slotKey(v.id, v.field, v.n))?.length ?? 0) > 1 });
+    for (const v of table.values) {
+      if (!ids.includes(v.id)) continue;
+      const slot = slotKey(v.id, v.field, v.n);
+      const conflict = (idx.slots.get(slot)?.length ?? 0) > 1;
+      // a detached slot is not the entry's value any more, unless it was filled again and now holds two (then both are shown, as a conflict)
+      if (!idx.redirects.has(slot) || conflict) values.push({ value: v, placeholder: partsOf(idx, v), conflict });
+    }
   }
   values.sort((a, b) => (FIELD_ORDER.get(a.value.field ?? "") ?? 0) - (FIELD_ORDER.get(b.value.field ?? "") ?? 0) || cmp(a.value.id, b.value.id) || a.value.n - b.value.n);
   return { id, kind: entry.kind, ids, forgotten, values };
@@ -603,7 +684,68 @@ export function tableConflicts(table: PlaceholderTable): readonly { readonly id:
 // ---- operations -------------------------------------------------------------------------------
 
 function ok<T extends object>(d: Draft, extra: T): { readonly ok: true; readonly table: PlaceholderTable } & T {
-  return { ok: true, table: finish(d), ...extra };
+  return { ok: true, table: tableBindDecisions(finish(d)), ...extra };
+}
+
+/** Binds every decision that nothing is bound to yet to the entries that hold its text (see `TableBind`), and returns the table unchanged when there is nothing to bind.
+ *  The union of two versions cannot do this: a bind made at the moment a decision meets a holder would depend on whether a mark had dropped the holder's value
+ *  by then, so the union would stop being associative. A device can: the decision and the holder meet in ITS table, and the bind is a true fact about it. Every
+ *  operation of this module ends here; after a merge (reading another device's version) the caller runs it once, before it writes the table, so that a mark that
+ *  arrives later takes the decision too. A decision that is bound already follows a redirect of its anchor when the copy at the target holds its text, a chain of
+ *  redirects to its end (review round 2, R1); it is never bound to a holder it did not come from. */
+export function tableBindDecisions(table: PlaceholderTable): PlaceholderTable {
+  if (table.decisions.length === 0) return table;
+  const bound = new Set(table.binds.map((b) => b[0]));
+  const idx = indexOf(table);
+  let d: Draft | undefined;
+  for (const n of table.decisions) {
+    if (bound.has(n.sid)) continue;
+    for (const holder of holdersOf(idx, n.text)) {
+      d ??= draftOf(table);
+      addBind(d, n.sid, holder);
+    }
+  }
+  // A bound decision follows a redirect of its anchor when the copy at the target holds its text (review round 2, R1): one device decided about a form of M while
+  // another detached that form to N, and neither bound the decision to N. Index: the anchors of a decision, and per source entry the targets by form of the copy.
+  const followers = table.redirects.length === 0 ? undefined : followersOf(idx, table.redirects);
+  if (followers !== undefined) {
+    const anchorsOf = new Map<string, string[]>();
+    for (const [sid, anchor] of table.binds) push(anchorsOf, sid, anchor);
+    for (const n of table.decisions) {
+      const anchors = anchorsOf.get(n.sid);
+      if (anchors === undefined) continue;
+      const seen = new Set(anchors);
+      const forms = [null, ...FIELDS].map((field) => [field, normalizeTableValue(field, n.text)] as const);
+      for (const anchor of anchors) { // the loop sees what is pushed below: a chain is followed to its end
+        const byForm = followers.get(anchor);
+        if (byForm === undefined) continue;
+        for (const [field, key] of forms) {
+          if (key === "") continue;
+          for (const to of byForm.get(formKey(field, key)) ?? []) {
+            if (seen.has(to)) continue;
+            seen.add(to);
+            anchors.push(to);
+            d ??= draftOf(table);
+            addBind(d, n.sid, to);
+          }
+        }
+      }
+    }
+  }
+  return d === undefined ? table : finish(d);
+}
+
+/** Per source entry of a redirect: the targets whose copy (to, field, 1) holds a value, by form. A copy that a mark dropped is not in the index, so it is not here. */
+function followersOf(idx: Index, redirects: readonly TableRedirect[]): Map<string, Map<string, string[]>> {
+  const out = new Map<string, Map<string, string[]>>();
+  for (const r of redirects) {
+    for (const v of idx.slots.get(slotKey(r.to, r.field, 1)) ?? []) {
+      let byForm = out.get(r.id);
+      if (byForm === undefined) out.set(r.id, (byForm = new Map<string, string[]>()));
+      push(byForm, formKey(r.field, v.key), r.to);
+    }
+  }
+  return out;
 }
 
 const fail = (error: TableError): { readonly ok: false; readonly error: TableError } => ({ ok: false, error });
@@ -651,13 +793,9 @@ export function tableAddValue(
   const d = draftOf(table);
   const v = mkValue(id, field, n, key, text);
   d.values.set(valueKey(v), v);
-  // a decision made before this value was in the table is anchored to this entry from now on (see `DocumentNote`): a copy of the one that stands, for this ID
-  const nameKey = normalizeTableValue(null, text);
-  const standing = new Map<string, DocumentNote>();
-  for (const note of table.decisions) if (note.key === nameKey) standing.set(decisionKey(note.doc, note.key, ""), winner(standing.get(decisionKey(note.doc, note.key, "")), note));
-  for (const note of standing.values()) if (!note.removed) d.decisions.set(decisionKey(note.doc, note.key, id), mkDocNote(note.doc, note.key, id, note.text, note.counter, note.removed));
-  const next = finish(d);
-  return { ok: true, table: next, placeholder: { carrier: carrierOf(entry.kind), id, field, n }, created: true };
+  // a decision made before this value was in the table concerns this entry from now on: `tableBindDecisions` at the end binds it (a decision that is bound to
+  // somebody else already is that entry's decision and stays so: binding it here too would let forgetting THIS entry take the other one's decision, review B7)
+  return { ok: true, table: tableBindDecisions(finish(d)), placeholder: { carrier: carrierOf(entry.kind), id, field, n }, created: true };
 }
 
 /** Joins two entries on purpose (they stay one group; both IDs keep resolving, nothing in the notes changes). */
@@ -700,6 +838,10 @@ export function tableDetachValue(
   d.entries.set(newId, mkEntry(newId, kind, [id]));
   const fresh = mkValue(newId, field, 1, only.key, only.text);
   d.values.set(valueKey(fresh), fresh);
+  // the decisions about this text that concern the old entry concern the new one too: forgetting either takes them (review E1; the same rest as in E2)
+  const textKey = normalizeTableValue(null, only.text);
+  const bound = new Set(table.binds.filter((b) => b[1] === id).map((b) => b[0]));
+  for (const n of table.decisions) if (n.key === textKey && bound.has(n.sid)) addBind(d, n.sid, newId);
   return ok(d, { placeholder: { carrier: carrierOf(kind), id: newId, field, n: 1 } });
 }
 
@@ -722,17 +864,30 @@ export function tableForget(table: PlaceholderTable, id: string, options: { read
   const m = mkMark(ids, keep);
   d.marks.set(markKey(m), m);
   let next = finish(d);
-  // this device still knows the values that are dropped now: a decision about the same text goes with them, also one that no ID is bound to (it was made before the
-  // person was known and nothing added the link). Another device's copy of such an unbound decision cannot be reached: a mark carries no names.
-  const gone = new Set<string>();
+  // this device still knows the values that are dropped now: a decision about the same text that is bound to NOBODY (it was made before the person was known and
+  // nothing bound it, or the value arrived through a merge) is bound to the forgotten entry now, so every device drops it. One that is bound to a living entry
+  // stays: it is that entry's decision, whatever its text is called elsewhere.
+  const goneBy = new Map<string, string>(); // normalized text of a dropped value -> the smallest forgotten ID it stood for
   const kept = new Set(next.values.map((v) => valueKey(v)));
-  for (const v of table.values) if (!kept.has(valueKey(v))) gone.add(normalizeTableValue(null, v.text));
-  const stale = next.decisions.filter((n) => gone.has(n.key));
+  const forgottenNow = new Set(tableForgotten(next));
+  const detachedTo = new Map<string, string>(); // slot -> the forgotten entry its value was detached to
+  for (const r of next.redirects) if (forgottenNow.has(r.to)) detachedTo.set(slotKey(r.id, r.field, r.n), r.to);
+  for (const v of table.values) {
+    if (kept.has(valueKey(v))) continue;
+    const owner = forgottenNow.has(v.id) ? v.id : detachedTo.get(slotKey(v.id, v.field, v.n));
+    if (owner === undefined) continue;
+    const k = normalizeTableValue(null, v.text);
+    const had = goneBy.get(k);
+    if (had === undefined || owner < had) goneBy.set(k, owner);
+  }
+  const bound = new Set(next.binds.map((b) => b[0]));
+  const stale = next.decisions.filter((n) => goneBy.has(n.key) && !bound.has(n.sid));
   if (stale.length > 0) {
     const cleaned = draftOf(next);
-    for (const n of stale) cleaned.decisions.delete(decisionKey(n.doc, n.key, n.anchor));
+    for (const n of stale) addBind(cleaned, n.sid, goneBy.get(n.key) as string);
     next = finish(cleaned);
   }
+  next = tableBindDecisions(next);
   return { ok: true, table: next, forgotten: tableForgotten(next).filter((x) => !idx.forgotten.has(x)) };
 }
 
@@ -763,28 +918,28 @@ function holdersOf(idx: Index, text: string): string[] {
 }
 
 /** Records (`plain`) or revokes the decision to leave a text in the clear in one document. `doc` is whatever the caller calls a document; the text is read
- *  as a name. */
-export function tableSetPlain(table: PlaceholderTable, doc: string, text: string, plain: boolean): TableResult {
+ *  as a name. A new decision needs `options.id`, a fresh ID the caller drew (like an entry ID; this module never invents randomness): `bad-id` when it is
+ *  missing, `id-taken` when a decision or a bind uses it already. A decision that exists is changed under its own ID, `id` is not read then. The decision
+ *  is bound to the entries that hold the text (see `TableBind`), so it goes with them. */
+export function tableSetPlain(table: PlaceholderTable, doc: string, text: string, plain: boolean, options: { readonly id?: string } = {}): TableResult {
   if (typeof doc !== "string" || doc === "" || typeof text !== "string" || typeof plain !== "boolean") return fail("bad-input");
   const key = normalizeTableValue(null, text);
   if (key === "") return fail("empty-value");
-  const mine = table.decisions.filter((n) => n.doc === doc && n.key === key);
-  const current = mine.reduce<DocumentNote | undefined>((best, n) => winner(best, n), undefined);
+  const current = table.decisions.filter((n) => n.doc === doc && n.key === key).reduce<DocumentNote | undefined>((best, n) => docWinner(best, n), undefined);
   if (current === undefined && !plain) return { ok: true, table };
   const changed = current === undefined || current.removed === plain; // the state asked for differs from the one that stands
-  const state = changed ? { text, counter: (current?.counter ?? 0) + 1, removed: !plain } : { text: current.text, counter: current.counter, removed: current.removed };
-  const holders = holdersOf(indexOf(table), text);
-  const anchors = holders.length > 0 ? holders : [""];
-  const d = draftOf(table);
-  let touched = false;
-  for (const anchor of anchors) {
-    const had = mine.find((n) => n.anchor === anchor);
-    if (!changed && had !== undefined) continue;
-    if (!changed && state.removed) continue; // nothing to anchor for a decision that is not in force
-    d.decisions.set(decisionKey(doc, key, anchor), mkDocNote(doc, key, anchor, state.text, state.counter, state.removed));
-    touched = true;
+  if (!changed) return { ok: true, table }; // the state asked for stands already
+  let sid: string;
+  if (current !== undefined) sid = current.sid;
+  else {
+    const asked: unknown = options?.id;
+    if (typeof asked !== "string" || !isPlaceholderId(asked)) return fail("bad-id");
+    sid = asked;
+    if (table.binds.some((b) => b[0] === sid) || table.decisions.some((n) => n.sid === sid)) return fail("id-taken");
   }
-  return touched ? ok(d, {}) : { ok: true, table };
+  const d = draftOf(table);
+  d.decisions.set(decisionKey(sid, doc, key), mkDocNote(sid, doc, key, text, (current?.counter ?? 0) + 1, !plain));
+  return ok(d, {}); // `ok` binds a decision that nothing is bound to yet to the holders of its text, a revoked one too: it still holds the text
 }
 
 /** The texts on the exception list, by normalized form. */
@@ -802,7 +957,7 @@ export function tableIsException(table: PlaceholderTable, text: string): boolean
 export function tableIsPlain(table: PlaceholderTable, doc: string, text: string): boolean {
   const key = normalizeTableValue(null, text);
   if (key === "") return false;
-  const current = table.decisions.filter((n) => n.doc === doc && n.key === key).reduce<DocumentNote | undefined>((best, n) => winner(best, n), undefined);
+  const current = table.decisions.filter((n) => n.doc === doc && n.key === key).reduce<DocumentNote | undefined>((best, n) => docWinner(best, n), undefined);
   return current !== undefined && !current.removed;
 }
 
@@ -824,7 +979,8 @@ export function serializeTable(table: PlaceholderTable): string {
     redirects: table.redirects.map((r) => ({ id: r.id, field: r.field, n: r.n, to: r.to })),
     marks: table.marks.map((m) => ({ ids: m.ids, keep: m.keep })),
     exceptions: table.exceptions.map((n) => ({ text: n.text, counter: n.counter, removed: n.removed })),
-    decisions: table.decisions.map((n) => ({ doc: n.doc, anchor: n.anchor, text: n.text, counter: n.counter, removed: n.removed })),
+    decisions: table.decisions.map((n) => ({ id: n.sid, doc: n.doc, text: n.text, counter: n.counter, removed: n.removed })),
+    binds: table.binds.map((b) => ({ decision: b[0], anchor: b[1] })),
   });
 }
 
@@ -912,13 +1068,16 @@ export function parseTable(text: string): ParseResult {
       d.exceptions.set(key, winner(d.exceptions.get(key), mkNote(key, x.text, x.counter, x.removed)));
     });
     list(root, "decisions").forEach((x, i) => {
-      if (!isObj(x) || typeof x.doc !== "string" || x.doc === "" || typeof x.text !== "string" || !isCounter(x.counter) || typeof x.removed !== "boolean") throw new Bad("shape", `decisions[${i}]`);
+      if (!isObj(x) || !isId(x.id) || typeof x.doc !== "string" || x.doc === "" || typeof x.text !== "string" || !isCounter(x.counter) || typeof x.removed !== "boolean") throw new Bad("shape", `decisions[${i}]`);
       const key = normalizeTableValue(null, x.text);
       if (key === "") throw new Bad("shape", `decisions[${i}]`);
-      if (x.anchor !== "" && !isId(x.anchor)) throw new Bad("shape", `decisions[${i}].anchor`);
-      if (x.anchor !== "") known(x.anchor, `decisions[${i}].anchor`);
-      const k = decisionKey(x.doc, key, x.anchor);
-      d.decisions.set(k, winner(d.decisions.get(k), mkDocNote(x.doc, key, x.anchor, x.text, x.counter, x.removed)));
+      const k = decisionKey(x.id, x.doc, key);
+      d.decisions.set(k, winner(d.decisions.get(k), mkDocNote(x.id, x.doc, key, x.text, x.counter, x.removed)));
+    });
+    list(root, "binds").forEach((x, i) => {
+      if (!isObj(x) || !isId(x.decision) || !isId(x.anchor)) throw new Bad("shape", `binds[${i}]`);
+      known(x.anchor, `binds[${i}].anchor`);
+      addBind(d, x.decision, x.anchor);
     });
     return { ok: true, table: finish(d) };
   } catch (e) {

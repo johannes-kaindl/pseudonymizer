@@ -1,4 +1,4 @@
-// vendored from code-kit@0.82.0, src/ts/pure/phone.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from code-kit@0.86.1, src/ts/pure/phone.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 // Origin: lifted from calendar-notes `src/core/adopt/phone.ts` (calendar-notes@4d899d7, the commit that added the extension marker), moved, not rewritten
 // (Welle 36, kp2b, order 8 of the pseudonymizer design, spec sections 7.2 and 8.4). The comments below are the original ones, in German. calendar-notes keeps
 // its own copy until its next release of its own; then it takes this file.

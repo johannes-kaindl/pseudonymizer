@@ -1,4 +1,4 @@
-// vendored from code-kit@0.82.0, src/ts/web/key-ratchet.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from code-kit@0.86.1, src/ts/web/key-ratchet.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 /** Key ratchet: from the chain key of stand n to the chain key of stand n+1 and the encryption key of stand n, both by HKDF-SHA-256 over WebCrypto.
  *
  *  ABGENOMMEN 2026-11-19 — Opus-Review in zwei Runden (Runde 1 gegen 446a089: 0 blockierend, 0 wichtig, 6 klein, behoben in 53fd995; Runde 2 gegen 53fd995: abgenommen) mit Messung in Chromium 142 (Obsidian 1.15.1) und Node: Vektoren aus RFC 5869 und NIST CAVP, Bitkipp-Versuche, 10 000 Siegel ohne doppelten Nonce. Berichte: review-krypto-runde1.md und review-krypto-runde2.md im Planungs-Cache der Welle 36 (Kit-Linie). Nicht gemessen: WebKit/iOS (kommt mit der iPhone-Messung des Pseudonymizers).
