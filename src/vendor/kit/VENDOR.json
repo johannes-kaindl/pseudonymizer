@@ -3,5 +3,8 @@
   "version": "0.78.0",
   "sha": "84820b7",
   "vendored": "i18n.ts, rel-path.ts",
-  "license": "AGPL-3.0-or-later"
+  "license": "AGPL-3.0-or-later",
+  "obsidian_kit_version": "0.99.1",
+  "obsidian_kit_sha": "d5efe78",
+  "obsidian_kit_vendored": "pseudonymizer-source.ts"
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import PseudonymizerPlugin from "../src/main";
+import type { Engine } from "../src/core/engine";
+import { isPseudonymizerApi } from "../src/vendor/kit/pseudonymizer-source";
 import { PseudonymizerSettingTab } from "../src/obsidian/settings-tab";
 
 function load() {
@@ -17,6 +19,14 @@ describe("PseudonymizerPlugin", () => {
     expect(plugin.settings.folder).toBe("_pseudonymizer");
     expect(plugin.device.showPlaintext).toBe(true);
     expect(plugin.settingTabs[0]).toBeInstanceOf(PseudonymizerSettingTab);
+  });
+  it("exposes the plugin api v1, reading the engine at call time", async () => {
+    const { plugin } = load();
+    await plugin.onload();
+    expect(isPseudonymizerApi(plugin.api)).toBe(true);
+    expect(plugin.api.status()).toEqual({ state: "not-set-up" });
+    plugin.engine = { ...plugin.engine, state: () => "ready" } as Engine;
+    expect(plugin.api.status()).toEqual({ state: "ready" });
   });
   it("saveSettings persists only the settings", async () => {
     const { plugin, store } = load();
