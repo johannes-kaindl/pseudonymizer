@@ -108,6 +108,7 @@ function makeHost(state: PluginState = "ready", over: { copyMode?: "placeholder"
     settings,
     device: { get showPlaintext() { return shown; }, setShowPlaintext: (on: boolean) => { shown = on; store.set("x", on); }, deviceName: "d", setDeviceName: () => undefined },
     memory: new MemoryTable(),
+    api: { restore: () => ({ error: "locked", message: "the table is locked" }) },
     state: () => state,
     openView: (tab) => { opened.push(tab); return Promise.resolve(); },
     emitChange: () => { changes++; },
@@ -179,7 +180,7 @@ describe("registerCommands", () => {
   it("a command whose function is missing shows the 'not available yet' notice", () => {
     const { host, plugin, added } = makeHost("ready", { editor: true });
     registerCommands(plugin, host);
-    for (const id of ["pseudonymize-selection", "pseudonymize-note", "copy-plaintext"]) {
+    for (const id of ["pseudonymize-selection", "pseudonymize-note"]) {
       Notice.instances.length = 0;
       added.find((c) => c.id === id)!.checkCallback?.(false);
       expect(lastNotice(), id).toBe(STRINGS.en["notice.notAvailable"]);
@@ -224,6 +225,18 @@ describe("registerCommands", () => {
       await new Promise((r) => setTimeout(r, 0));
       // the memory of the fake host holds no table: the functions themselves say so
       expect(lastNotice(), id).toBe(STRINGS.en["notice.notSetUp"]);
+    }
+  });
+
+  it("copy-plaintext and copy-placeholders are wired to the copy flow, not to the 'not available yet' notice", async () => {
+    const { host, plugin, added } = makeHost("ready", { copyMode: "as-shown", editor: false });
+    registerCommands(plugin, host);
+    for (const id of ["copy-plaintext", "copy-placeholders"]) {
+      Notice.instances.length = 0;
+      added.find((c) => c.id === id)!.checkCallback?.(false);
+      await new Promise((r) => setTimeout(r, 0));
+      // the fake workspace has no open note: the flow itself says so
+      expect(lastNotice(), id).toBe(STRINGS.en["notice.copy.noNote"]);
     }
   });
 

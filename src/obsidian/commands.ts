@@ -5,6 +5,8 @@ import type { MemoryTable } from "../core/memory-table";
 import type { PseudonymizerSettings } from "../core/settings";
 import type { PluginState } from "../core/status";
 import { t } from "../vendor/kit/i18n";
+import type { PseudonymizerApi } from "../vendor/kit/pseudonymizer-source";
+import { copyCommand } from "./copy";
 import type { DeviceState } from "./device";
 import { lookupPlaceholderCommand, searchPlaintextCommand } from "./lookup-commands";
 
@@ -15,6 +17,8 @@ export interface CommandHost {
   device: DeviceState;
   /** Die Tabelle im Arbeitsspeicher (Nachschlagen und Suchen lesen sie). */
   memory: MemoryTable;
+  /** Die Plugin-API; „Mit Klartext kopieren“ geht über `restore`, nicht an der API vorbei. */
+  api: Pick<PseudonymizerApi, "restore">;
   state(): PluginState;
   openView(tab?: ViewTab): Promise<void>;
   /** Einrichten, Code eingeben und Code anzeigen (`setup.ts`); sie melden dem Nutzer selbst, was geschah. */
@@ -38,8 +42,8 @@ const HANDLERS: Record<CommandId, (host: CommandHost) => void> = {
   "pseudonymize-note": notAvailable,
   "search-plaintext": (h) => { void searchPlaintextCommand(h); },
   "lookup-placeholder": (h) => { void lookupPlaceholderCommand(h); },
-  "copy-plaintext": notAvailable,
-  "copy-placeholders": notAvailable,
+  "copy-plaintext": (h) => { void copyCommand(h, "plaintext"); },
+  "copy-placeholders": (h) => { void copyCommand(h, "placeholders"); },
   "forget-person": (h) => { void h.runForget(); },
   "show-recovery-code": (h) => { void h.runShowCode(); },
   "enter-recovery-code": (h) => { void h.runEnterCode(); },

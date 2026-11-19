@@ -3,7 +3,7 @@
  * Stand: Aufgabe 12 Teil b. Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
  * die Gerätedateien: Einrichten (Abbruch, Kontrollkästchen, Datei und Schlüssel), eine fremde Fassung im Ordner, den Reiter „Geräte und Schlüssel“,
  * die Sperre nach gelöschtem Schlüssel und die Code-Eingabe, dazu (Teil b) „Trotzdem einrichten“, Schlüssel ersetzen, Person vergessen (die Gerätedatei auf der Platte
- * wird mit dem Schlüssel im Treiber geöffnet und auf Klartext geprüft) und Gerät entfernen. Das Einblenden kommt später dazu.
+ * wird mit dem Schlüssel im Treiber geöffnet und auf Klartext geprüft) und Gerät entfernen; seit Aufgabe 16 die Lesesicht (Einblenden, Umschalter, Sperren, Vergessen, Kopieren, Kopier-Befehle, Popout, Zug mit der Maus, PDF-Export). Live Preview folgt mit Aufgabe 17.
  *
  * ## Zweitinstanz (eigenes Profil, eigener Port — NICHT die reguläre Instanz anfassen; `--port` ist Pflicht)
  *
@@ -14,7 +14,10 @@
  * jeder Punkt muss rot werden, sonst misst er nichts vom Plugin.
  * Bilanz: `createBilanz` mit Soll-Liste. Exit 1 bei Rot oder „nichts gemessen“, Exit 2 bei Abbruch.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cwd } from "node:process";
 
@@ -54,7 +57,16 @@ const PUNKTE = [
   "K Code-Eingabe: ein falsches Prüfzeichen speichert nichts und nennt den Grund; der richtige Code macht das Gerät wieder ready",
   "H Einrichten mit vorhandenen Dateien: Abbrechen ändert nichts, „Trotzdem einrichten“ führt zu ready mit neuer Kette, die alte eigene Datei liegt beiseite",
   "X Schlüssel ersetzen: Bestätigung, neuer Code mit Kontrollkästchen, danach ready mit neuer Kette (Stand 0), gezeigter Code = gespeicherter Schlüssel, alter Platzhalter löst weiter auf, die Abschlussdatei der alten Kette sperrt ein Gerät mit dem alten Schlüssel und steht nicht in der Geräteliste",
+  "W Lesesicht: Platzhalter im Fließtext zeigt Klartext mit gepunkteter Unterstreichung und dem Platzhalter im Tooltip; in Code, pre, Link-Ziel, Bild-URL, title und alt bleibt der Platzhalter, kein Attribut und kein Netzabruf trägt Klartext; ein noch nicht lesbarer Wert nennt den Grund, ein unbekannter bleibt Text",
+  "U Umschalter „Klartext zeigen“: wechselt alle sichtbaren Stellen ohne Neuaufbau (dieselben Knoten), im DOM steht bei „aus“ kein Klartext, die Datei der Notiz bleibt byte-gleich (Prüfsumme vorher und nachher)",
+  "Y Kopieren in der Lesesicht (echte Auswahl, copy-Ereignis mit DataTransfer): Vorgabe Platzhalter, auch bei nur teilweise erfasster Stelle und bei zwei gleichen Texten nebeneinander; „was ich sehe“ liefert Klartext, bei ausgeblendetem Klartext wieder Platzhalter",
+  "M Befehle „Mit Klartext kopieren“ und „Mit Platzhaltern kopieren“: Auswahl und ganze Notiz in der Zwischenablage, ein unlesbarer Platzhalter hält alles zurück und steht (ohne Klartext) in der Notice",
+  "N Sperren und Entsperren schalten gezeigte Stellen ohne Neuöffnen um: gesperrt nicht lesbar mit Grund und ohne Klartext im DOM, entsperrt wieder Klartext",
+  "O Popout-Fenster: Umschalter und Kopieren wirken auch im eigenen document des Popouts",
+  "Q Ziehen markierten Texts aus der Lesesicht (echter Mauszug, Input.setInterceptDrags): der Zug trägt in der Vorgabe den Platzhalter, nie den Klartext",
+  "P PDF-Export (Speicherdialog im Renderer ersetzt): mit „Klartext zeigen“ trägt das PDF den Klartext und nicht den Platzhalter, ohne den Platzhalter und nicht den Klartext",
   "Z Person vergessen: Wahl, Warndialog mit Werten und Grenzen, danach nennt restore den Platzhalter in forgotten, Stand n+1, die Gerätedatei auf der Platte trägt keinen Klartext der Person",
+  "J Vergessen in der offenen Lesesicht: die Stellen der vergessenen Person schalten ohne Neuöffnen auf „vergessen“ (Klasse, Tooltip, kein Klartext im DOM), die der anderen Person bleiben lesbar",
   "D Gerät entfernen: Knopf im Reiter, Warnung bei nicht lesbarer Fassung, danach ist die fremde Datei weg und die eigene bleibt",
 ] as const;
 
@@ -224,6 +236,187 @@ async function oeffneAbschlussdatei(basePath: string, eigeneId: string, alt: Sch
   return { vorhanden: true, gesperrt: "closed" in c, nurMarkierung: new TextDecoder().decode(o.plaintext) === '{"format":"pseudonymizer-closed","version":1,"replaced":true}' };
 }
 
+// ---- Lesesicht (Aufgabe 16): Notizen aus dem Fixture, in der Lesesicht geöffnet und gemessen ----
+
+const NOTIZ_LESEN = "Lesesicht.md";
+const NOTIZ_KOPIEREN = "Kopieren.md";
+/** Alles, was nach Klartext aussieht (Max und seine Werte; erfunden). Steht es im DOM außerhalb eines Ersatz-Elements, in einem Attribut, in einer URL oder in der Zwischenablage der Vorgabe, ist der Punkt rot. */
+const KLARTEXT_JS = String.raw`/Mustermann|max(@|%40)example|030(%20| )?1234567|Berta Beispiel/i`;
+const KLARTEXT = /Mustermann|max(@|%40)example|030(%20| )?1234567|Berta Beispiel/i;
+/** Nur Max und seine Werte (Berta bleibt nach dem Vergessen von Max lesbar). */
+const KLARTEXT_MAX = /Mustermann|max(@|%40)example|030(%20| )?1234567/i;
+const MAX = FREMD_PLATZHALTER;
+
+/** Die Wurzel der Notiz in ihrem Blatt (Marke am Blatt-Inhalt, gesetzt von `oeffneNotiz`). */
+const WURZEL = (pfad: string): string => `document.querySelector('[data-pseu-smoke=${q(pfad)}]')`;
+
+/** Öffnet eine vorhandene Fixture-Notiz in einem neuen Tab (nie `modify`) und wartet auf ihre Ersatz-Stellen. `modus` `preview` ist die Lesesicht. */
+async function oeffneNotiz(cdp: Cdp, pfad: string, modus: "preview" | "source", ersatzStellen: number): Promise<boolean> {
+  await cdp.evaluate(`
+    const f = app.vault.getAbstractFileByPath(${q(pfad)});
+    if (!f) return false;
+    const leaf = app.workspace.getLeaf("tab");
+    await leaf.openFile(f, { state: { mode: ${q(modus)} } });
+    leaf.view.containerEl.setAttribute("data-pseu-smoke", ${q(pfad)});
+    app.workspace.setActiveLeaf(leaf, { focus: true });
+    return true;
+  `);
+  if (ersatzStellen === 0) return true;
+  return Boolean(await pollUntil<boolean>(cdp, `
+    const c = ${WURZEL(pfad)};
+    return c && c.querySelectorAll(".okit-swap").length >= ${ersatzStellen} ? true : null;
+  `, 10_000, 250));
+}
+
+/** Schließt jedes Blatt, das der Treiber geöffnet hat (auch in Popout-Fenstern). */
+const SCHLIESSE_NOTIZEN = `
+  const alle = [];
+  app.workspace.iterateAllLeaves((l) => { if (l.view && l.view.containerEl && l.view.containerEl.getAttribute("data-pseu-smoke")) alle.push(l); });
+  for (const l of alle) l.detach();
+  return alle.length;
+`;
+
+interface Stelle { text: string; shown: boolean; forgotten: boolean; unreadable: boolean; title: string; linie: string; raw: string }
+interface Lesestand { stellen: Stelle[]; html: string; klartextAusserhalb: boolean; klartextInAttribut: number }
+
+/** Das Blatt einer vom Treiber geöffneten Notiz (Ausdruck im Renderer). */
+const BLATT = (pfad: string): string => `app.workspace.getLeavesOfType("markdown").find((l) => l.view.containerEl.getAttribute("data-pseu-smoke") === ${q(pfad)})`;
+
+/** Was die Lesesicht einer Notiz gerade zeigt: jede Ersatz-Stelle mit Zustand, Tooltip und berechneter Linie, dazu, ob Klartext außerhalb von Ersatz-Stellen oder in einem Attribut steht. */
+const LESESTAND = (pfad: string): string => `
+  const c = ${WURZEL(pfad)};
+  if (!c) return null;
+  const re = ${KLARTEXT_JS};
+  const stellen = Array.from(c.querySelectorAll(".okit-swap")).map((e) => ({
+    text: e.textContent, shown: e.classList.contains("is-shown"), forgotten: e.classList.contains("is-forgotten"), unreadable: e.classList.contains("is-unreadable"),
+    title: e.getAttribute("title") || "", linie: getComputedStyle(e).borderBottomStyle, raw: e.getAttribute("data-okit-swap") || "",
+  }));
+  const klon = c.cloneNode(true);
+  for (const e of Array.from(klon.querySelectorAll(".okit-swap"))) e.remove();
+  let attr = 0;
+  for (const e of Array.from(c.querySelectorAll("*"))) for (const a of Array.from(e.attributes)) if (re.test(a.value)) attr += 1;
+  return { stellen, html: c.innerHTML, klartextAusserhalb: re.test(klon.textContent), klartextInAttribut: attr };
+`;
+
+/** Die Prüfsumme der Datei einer Notiz auf der Platte (Anti-Ziel 4: Umschalten ändert keine Datei). */
+function pruefsumme(basePath: string, pfad: string): string | null {
+  const f = join(basePath, pfad);
+  return existsSync(f) ? createHash("sha256").update(readFileSync(f)).digest("hex") : null;
+}
+
+/** Ein synthetisches `copy` mit echter Auswahl; liefert, was der Handler in die Zwischenablage gäbe. `auswahl` ist ein Ausdruck, der einen Range im Dokument `doc` liefert. */
+const KOPIERE = (doc: string, auswahl: string): string => `
+  const doc = ${doc};
+  const range = (() => { ${auswahl} })();
+  const sel = doc.getSelection();
+  sel.removeAllRanges(); sel.addRange(range);
+  const dt = new DataTransfer();
+  const ev = new ClipboardEvent("copy", { clipboardData: dt, bubbles: true, cancelable: true });
+  (range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement).dispatchEvent(ev);
+  return { text: dt.getData("text/plain"), html: dt.getData("text/html"), abgefangen: ev.defaultPrevented };
+`;
+/** Auswahl: der ganze Inhalt des n-ten Absatzes der Notiz. */
+const ABSATZ = (pfad: string, n: number, doc = "document"): string => `
+  const p = ${WURZEL(pfad)}.querySelectorAll("p")[${String(n)}];
+  const r = ${doc}.createRange(); r.selectNodeContents(p); return r;
+`;
+
+/** Die Zwischenablage des Renderers abfangen (statt der echten): Schreibaufrufe landen in `window.__pseuClip`; der Deskriptor wird gemerkt und genau so zurückgestellt
+ *  (in Obsidians Renderer kann `writeText` eine eigene Eigenschaft der Instanz sein, ein `delete` risse Obsidians Wrapper heraus). */
+const ZWISCHENABLAGE_AN = `
+  window.__pseuClip = [];
+  window.__pseuClipDesc = Object.getOwnPropertyDescriptor(navigator.clipboard, "writeText") || null;
+  Object.defineProperty(navigator.clipboard, "writeText", { configurable: true, writable: true, value: (t) => { window.__pseuClip.push(String(t)); return Promise.resolve(); } });
+  return true;
+`;
+const ZWISCHENABLAGE_AUS = `
+  if (!window.__pseuClip) return 0;
+  if (window.__pseuClipDesc) Object.defineProperty(navigator.clipboard, "writeText", window.__pseuClipDesc);
+  else delete navigator.clipboard.writeText;
+  const n = (window.__pseuClip || []).length;
+  delete window.__pseuClip; delete window.__pseuClipDesc;
+  return n;
+`;
+
+/** Stellt den Schalter und die Einstellung wieder auf den Vorgabewert (nur im Arbeitsspeicher, nichts wird gespeichert). */
+const SCHALTER_ZURUECK = `
+  const p = ${P};
+  if (!p) return false;
+  p.device.setShowPlaintext(true);
+  p.settings.copyMode = "placeholder";
+  p.emitChange();
+  return true;
+`;
+
+/** Ein echter Mauszug über die Auswahl (Input.setInterceptDrags): liefert die Daten, die der Zug trägt, oder `null`, wenn kein Zug abgefangen wurde. */
+async function messeZiehen(cdp: Cdp, pfad: string): Promise<{ items: { mimeType: string; data: string }[] } | null> {
+  let items: { mimeType: string; data: string }[] | null = null;
+  cdp.on("Input.dragIntercepted", (params) => {
+    const d = (params as { data?: { items?: { mimeType: string; data: string }[] } }).data;
+    items = d?.items ?? [];
+  });
+  const box = await cdp.evaluate<{ x: number; y: number } | null>(`
+    app.workspace.setActiveLeaf(${BLATT(pfad)}, { focus: true });
+    const p = ${WURZEL(pfad)}.querySelectorAll("p")[0];
+    p.scrollIntoView({ block: "center" });
+    const r = document.createRange(); r.selectNodeContents(p);
+    const sel = document.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    const b = p.querySelector(".okit-swap").getBoundingClientRect();
+    return b.width === 0 ? null : { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  `);
+  if (!box) return null;
+  try {
+    await cdp.send("Input.setInterceptDrags", { enabled: true });
+    const c = { x: box.x, y: box.y, button: "left", clickCount: 1 };
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...c, buttons: 0 });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...c, buttons: 1 });
+    for (let i = 1; i <= 6 && items === null; i++) {
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...c, x: box.x + i * 8, y: box.y + i * 3, buttons: 1 });
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    for (let i = 0; i < 20 && items === null; i++) await new Promise((r) => setTimeout(r, 150));
+    // Der abgefangene Zug wird abgebrochen, nichts wird fallen gelassen.
+    await cdp.send("Input.dispatchDragEvent", { type: "dragCancel", x: box.x, y: box.y, data: { items: [], dragOperationsMask: 1 } });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...c, x: box.x, y: box.y, buttons: 0 });
+  } finally {
+    await cdp.send("Input.setInterceptDrags", { enabled: false });
+  }
+  return items === null ? null : { items };
+}
+
+/** Obsidians PDF-Export einer geöffneten Notiz in eine Datei: der native Speicherdialog hält eine Zweitinstanz fest und lässt sich per CDP nicht bedienen, also ersetzt der Treiber
+ *  `electron.remote.dialog.showSaveDialog` im Renderer (Etappe 0 (a), Bauplan). Wird die Ersetzung nicht wirksam, startet der Export nicht (sonst stünde der native Dialog). */
+async function exportiereAlsPdf(cdp: Cdp, pfad: string, ziel: string): Promise<{ ok: boolean; grund: string }> {
+  const ersetzt = await cdp.evaluate<{ ok: boolean; grund: string }>(`
+    try {
+      const d = window.require("electron").remote.dialog;
+      if (!window.__pseuSaveOrig) window.__pseuSaveOrig = d.showSaveDialog;
+      const mein = async () => ({ canceled: false, filePath: ${q(ziel)} });
+      d.showSaveDialog = mein;
+      return window.require("electron").remote.dialog.showSaveDialog === mein ? { ok: true, grund: "" } : { ok: false, grund: "showSaveDialog lässt sich nicht ersetzen" };
+    } catch (e) { return { ok: false, grund: "electron.remote nicht erreichbar: " + String(e && e.message ? e.message : e).slice(0, 80) }; }
+  `);
+  if (!ersetzt.ok) return ersetzt;
+  await cdp.evaluate(`
+    app.workspace.setActiveLeaf(${BLATT(pfad)}, { focus: true });
+    app.commands.executeCommandById("workspace:export-pdf");
+    return true;
+  `);
+  const dialog = await pollUntil<boolean>(cdp, `return (${MODAL_BTN("Export")}) ? true : null;`, 8000, 250);
+  if (!dialog) return { ok: false, grund: "der Export-Dialog kam nicht" };
+  if (!(await klickeKnopf(cdp, "Export"))) return { ok: false, grund: "Export nicht anklickbar" };
+  for (let i = 0; i < 120; i++) {
+    if (existsSync(ziel) && statSync(ziel).size > 1000) return { ok: true, grund: "" };
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return { ok: false, grund: "keine PDF-Datei nach 30 s" };
+}
+
+/** Der Text eines PDFs (poppler, `pdftotext`); `null`, wenn das Werkzeug fehlt. */
+function pdfText(datei: string): string | null {
+  try { return execFileSync("pdftotext", [datei, "-"], { encoding: "utf8" }); } catch { return null; }
+}
+
 function setup(): void {
   const vaultDir = stagingVaultDir(REPO_NAME);
   const log = buildVault({ repoRoot: REPO_ROOT, vaultDir, fixtureDir: FIXTURE_DIR, pluginId: PLUGIN_ID });
@@ -248,6 +441,12 @@ async function main(): Promise<void> {
   const zustandZurueck = async (): Promise<void> => {
     try {
       await cdp.evaluate(`for (const l of app.workspace.getLeavesOfType("pseudonymizer-view")) l.detach(); return true;`);
+      // Aufgabe 16: Notizen und Popout-Fenster des Treibers zu, Schalter und Einstellung zurück, Zwischenablage und Speicherdialog wiederherstellen, Netzmitschnitt aus.
+      await cdp.evaluate(SCHLIESSE_NOTIZEN);
+      await cdp.evaluate(SCHALTER_ZURUECK);
+      await cdp.evaluate(ZWISCHENABLAGE_AUS);
+      await cdp.evaluate(`if (window.__pseuSaveOrig) { window.require("electron").remote.dialog.showSaveDialog = window.__pseuSaveOrig; delete window.__pseuSaveOrig; } return true;`);
+      await cdp.send("Network.disable");
       await schliesseDialog(cdp);
       // Der Schlüssel der Messung bleibt nicht im Schlüsselbund des Wegwerf-Profils stehen.
       await cdp.evaluate(`const p = ${P}; if (p && p.keys) p.keys.clear(); return true;`);
@@ -561,6 +760,249 @@ async function main(): Promise<void> {
       `Personen da=${Boolean(personenDa)}, Frage=${q(xFrage ? xFrage.titel : null)}, bestätigt=${xBestaetigt}, Code gezeigt=${Boolean(xCode)}, Schlüssel vor dem Kontrollkästchen unverändert=${keinSchluesselWechselVorHaken !== null && q(keinSchluesselWechselVorHaken.chainId) === q(vorX?.chainId ?? [])}, Weiter gesperrt vorher=${xWeiterVorher}, neuer Schlüssel Stand=${neuX?.stand ?? null}, Code = Schlüssel: ${codeGleichX}, Datei=${q(dateiX ? { stand: dateiX.stand, kette: dateiX.chainId } : null)}, restore=${q(nochDa)}, fremde Zeile=${q(fremdZeile)}, Abschlussdatei (mit altem Schlüssel geöffnet)=${q(abschluss)}, Zeilen=${q(zeilenIds.length)} ohne Abschlussdatei=${abschlussKeineZeile}`);
     await clearNotices(cdp);
 
+    // --- W bis P: Lesesicht und Kopieren (Aufgabe 16) ---
+    // Stand hier: bereit auf der neuen Kette, die Tabelle trägt Max (Name, Mail, Telefon) und Berta aus der fremden Fassung; die Notizen sind erfundene Fixtures (`fixtures/vault/notes/`).
+    console.log("\nW · Lesesicht");
+    const schluesselW = await leseSchluessel(cdp);
+    await cdp.evaluate(SCHALTER_ZURUECK);
+    // Netzmitschnitt für das Bild mit Platzhalter in der URL: jede Anfrage der Hauptseite, solange die Notiz offen ist (Positivkontrolle: die Anfrage nach dem Bild selbst).
+    const netz: string[] = [];
+    await cdp.send("Network.enable");
+    cdp.on("Network.requestWillBeSent", (params) => {
+      const u = (params as { request?: { url?: string } }).request?.url;
+      if (u) netz.push(u);
+    });
+    const lesenOffen = await oeffneNotiz(cdp, NOTIZ_LESEN, "preview", 8);
+    await new Promise((r) => setTimeout(r, 1500));
+    const stand = lesenOffen ? await cdp.evaluate<Lesestand | null>(LESESTAND(NOTIZ_LESEN)) : null;
+    const rest = lesenOffen ? await cdp.evaluate<{ code: string | null; pre: string | null; href: string | null; aTitle: string | null; src: string | null; alt: string | null; imgTitle: string | null; imCode: number; ohneErsatz: boolean } | null>(`
+      const c = ${WURZEL(NOTIZ_LESEN)};
+      if (!c) return null;
+      const a = c.querySelector("a.external-link, a[href^='http']");
+      const img = c.querySelector("img");
+      const code = c.querySelector("p code");
+      const pre = c.querySelector("pre");
+      return {
+        code: code ? code.textContent : null, pre: pre ? pre.textContent.trim() : null,
+        href: a ? a.getAttribute("href") : null, aTitle: a ? a.getAttribute("title") : null,
+        src: img ? img.getAttribute("src") : null, alt: img ? img.getAttribute("alt") : null, imgTitle: img ? img.getAttribute("title") : null,
+        imCode: c.querySelectorAll("code .okit-swap, pre .okit-swap").length,
+        ohneErsatz: c.textContent.includes("Person_a2b3c4d5e6") && !Array.from(c.querySelectorAll(".okit-swap")).some((e) => e.getAttribute("data-okit-swap") === "Person_a2b3c4d5e6"),
+      };
+    `) : null;
+    const erwartetGezeigt = ["Max Mustermann", "030 1234567", "max@example.org", "Max Mustermann", "Max Mustermann", "Berta Beispiel", "Max Mustermann"];
+    const gezeigtW = stand ? stand.stellen.filter((x) => x.shown) : [];
+    const ersteStelle = stand?.stellen[0];
+    const nichtLesbar = stand ? stand.stellen.filter((x) => x.unreadable) : [];
+    const netzGesehen = netz.some((u) => u.includes("example.invalid"));
+    const netzSauber = netz.every((u) => !KLARTEXT.test(u));
+    record("W Lesesicht: Platzhalter im Fließtext zeigt Klartext mit gepunkteter Unterstreichung und dem Platzhalter im Tooltip; in Code, pre, Link-Ziel, Bild-URL, title und alt bleibt der Platzhalter, kein Attribut und kein Netzabruf trägt Klartext; ein noch nicht lesbarer Wert nennt den Grund, ein unbekannter bleibt Text",
+      lesenOffen && stand !== null && rest !== null
+        && q(gezeigtW.map((x) => x.text)) === q(erwartetGezeigt)
+        && ersteStelle !== undefined && ersteStelle.title === MAX && ersteStelle.linie === "dotted"
+        && nichtLesbar.length === 1 && nichtLesbar[0]!.raw === `${MAX}_Mail_5` && nichtLesbar[0]!.text === `${MAX}_Mail_5` && /may not have synced/.test(nichtLesbar[0]!.title) && nichtLesbar[0]!.linie === "dashed"
+        && rest.ohneErsatz
+        && rest.code === MAX && rest.pre === MAX && rest.imCode === 0
+        && (rest.href ?? "").endsWith(`/${MAX}`) && (rest.aTitle === null || rest.aTitle === MAX)
+        && (rest.src ?? "").endsWith(`/${MAX}.png`) && (rest.alt ?? "").includes(MAX) && (rest.imgTitle === null || rest.imgTitle === MAX)
+        && !stand.klartextAusserhalb && stand.klartextInAttribut === 0
+        && netzGesehen && netzSauber,
+      `Notiz offen=${lesenOffen}, gezeigt=${q(gezeigtW.map((x) => x.text))}, erste Stelle=${q(ersteStelle ? { title: ersteStelle.title, linie: ersteStelle.linie } : null)}, nicht lesbar=${q(nichtLesbar.map((x) => ({ raw: x.raw, title: x.title, linie: x.linie })))}, Rest=${q(rest)}, Klartext außerhalb=${stand?.klartextAusserhalb ?? null}, in Attributen=${stand?.klartextInAttribut ?? null}, Netz: ${netz.length} Anfragen, Bild gesehen=${netzGesehen}, ohne Klartext=${netzSauber}`);
+
+    // --- U ---
+    console.log("\nU · Umschalter");
+    const summeVor = pruefsumme(info.basePath, NOTIZ_LESEN);
+    const sonden = lesenOffen ? await cdp.evaluate<number>(`const els = Array.from(${WURZEL(NOTIZ_LESEN)}.querySelectorAll(".okit-swap")); els.forEach((e, i) => e.setAttribute("data-pseu-probe", String(i))); return els.length;`) : 0;
+    const DRUECKT = `const b = document.querySelector(".pseu-status-btn"); return b ? b.getAttribute("aria-pressed") : null;`;
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:toggle-plaintext`)}); return true;`);
+    const aus = await pollUntil<{ n: number; sonden: number; klartext: boolean; gedrueckt: string | null }>(cdp, `
+      const c = ${WURZEL(NOTIZ_LESEN)};
+      if (!c) return null;
+      const els = Array.from(c.querySelectorAll(".okit-swap"));
+      if (els.length === 0 || !els.every((e) => e.textContent === e.getAttribute("data-okit-swap"))) return null;
+      const b = document.querySelector(".pseu-status-btn");
+      return { n: els.length, sonden: els.filter((e) => e.hasAttribute("data-pseu-probe")).length, klartext: ${KLARTEXT_JS}.test(c.innerHTML), gedrueckt: b ? b.getAttribute("aria-pressed") : null };
+    `, 8000, 250);
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:toggle-plaintext`)}); return true;`);
+    const an = await pollUntil<{ n: number; sonden: number; gezeigt: number; gedrueckt: string | null }>(cdp, `
+      const c = ${WURZEL(NOTIZ_LESEN)};
+      if (!c) return null;
+      const els = Array.from(c.querySelectorAll(".okit-swap.is-shown"));
+      if (els.length < 7) return null;
+      const b = document.querySelector(".pseu-status-btn");
+      return { n: c.querySelectorAll(".okit-swap").length, sonden: Array.from(c.querySelectorAll(".okit-swap")).filter((e) => e.hasAttribute("data-pseu-probe")).length, gezeigt: els.length, gedrueckt: b ? b.getAttribute("aria-pressed") : null };
+    `, 8000, 250);
+    const summeNach = pruefsumme(info.basePath, NOTIZ_LESEN);
+    record("U Umschalter „Klartext zeigen“: wechselt alle sichtbaren Stellen ohne Neuaufbau (dieselben Knoten), im DOM steht bei „aus“ kein Klartext, die Datei der Notiz bleibt byte-gleich (Prüfsumme vorher und nachher)",
+      sonden >= 8 && Boolean(aus) && aus!.n === sonden && aus!.sonden === sonden && !aus!.klartext && aus!.gedrueckt === "false"
+        && Boolean(an) && an!.n === sonden && an!.sonden === sonden && an!.gezeigt >= 7 && an!.gedrueckt === "true"
+        && summeVor !== null && summeVor === summeNach,
+      `Stellen=${sonden}, aus=${q(aus)}, an=${q(an)}, Prüfsumme vorher=${summeVor?.slice(0, 12) ?? null} nachher=${summeNach?.slice(0, 12) ?? null}`);
+
+    // --- Y ---
+    console.log("\nY · Kopieren in der Lesesicht");
+    type Kopie = { text: string; html: string; abgefangen: boolean };
+    const ganzerAbsatz = lesenOffen ? await cdp.evaluate<Kopie>(KOPIERE("document", ABSATZ(NOTIZ_LESEN, 0))) : null;
+    const teilweise = lesenOffen ? await cdp.evaluate<Kopie>(KOPIERE("document", `
+      const t = ${WURZEL(NOTIZ_LESEN)}.querySelector(".okit-swap").firstChild;
+      const r = document.createRange(); r.setStart(t, 3); r.setEnd(t, 8); return r;
+    `)) : null;
+    const zweiGleiche = lesenOffen ? await cdp.evaluate<Kopie>(KOPIERE("document", ABSATZ(NOTIZ_LESEN, 1))) : null;
+    await cdp.evaluate(`const p = ${P}; if (!p) return false; p.settings.copyMode = "as-shown"; p.emitChange(); return true;`);
+    const wieGesehen = lesenOffen ? await cdp.evaluate<Kopie>(KOPIERE("document", ABSATZ(NOTIZ_LESEN, 0))) : null;
+    await cdp.evaluate(`const p = ${P}; if (!p) return false; p.device.setShowPlaintext(false); p.emitChange(); return true;`);
+    const wieGesehenAus = lesenOffen ? await cdp.evaluate<Kopie>(KOPIERE("document", ABSATZ(NOTIZ_LESEN, 0))) : null;
+    await cdp.evaluate(SCHALTER_ZURUECK);
+    const ersterAbsatz = `Hallo ${MAX}, Rückruf unter ${MAX}_Telefon, Mail ${MAX}_Mail.`;
+    record("Y Kopieren in der Lesesicht (echte Auswahl, copy-Ereignis mit DataTransfer): Vorgabe Platzhalter, auch bei nur teilweise erfasster Stelle und bei zwei gleichen Texten nebeneinander; „was ich sehe“ liefert Klartext, bei ausgeblendetem Klartext wieder Platzhalter",
+      ganzerAbsatz !== null && teilweise !== null && zweiGleiche !== null && wieGesehen !== null && wieGesehenAus !== null
+        && ganzerAbsatz.abgefangen && ganzerAbsatz.text.trim() === ersterAbsatz && !KLARTEXT.test(ganzerAbsatz.text) && !KLARTEXT.test(ganzerAbsatz.html)
+        && teilweise.abgefangen && teilweise.text.trim() === MAX && !KLARTEXT.test(teilweise.html)
+        && zweiGleiche.abgefangen && zweiGleiche.text.trim() === `Zwei gleiche nebeneinander: ${MAX} ${MAX}`
+        && wieGesehen.abgefangen && wieGesehen.text.trim() === "Hallo Max Mustermann, Rückruf unter 030 1234567, Mail max@example.org."
+        && wieGesehenAus.abgefangen && wieGesehenAus.text.trim() === ersterAbsatz && !KLARTEXT.test(wieGesehenAus.html),
+      `Vorgabe=${q(ganzerAbsatz?.text.trim() ?? null)}, teilweise=${q(teilweise?.text.trim() ?? null)}, zwei gleiche=${q(zweiGleiche?.text.trim() ?? null)}, „was ich sehe“ an=${q(wieGesehen?.text.trim() ?? null)}, aus=${q(wieGesehenAus?.text.trim() ?? null)}`);
+
+    // --- M ---
+    console.log("\nM · Kopier-Befehle");
+    await cdp.evaluate(ZWISCHENABLAGE_AN);
+    const kopierenOffen = await oeffneNotiz(cdp, NOTIZ_KOPIEREN, "source", 0);
+    const waehle = (von: string, bis: string): string => `
+      const ed = ${BLATT(NOTIZ_KOPIEREN)}.view.editor;
+      ed.setSelection(${von}, ${bis});
+      return true;
+    `;
+    const warteClip = (n: number): Promise<string[] | null> => pollUntil<string[]>(cdp, `return window.__pseuClip && window.__pseuClip.length >= ${String(n)} ? window.__pseuClip.slice() : null;`, 5000, 150);
+    await cdp.evaluate(waehle(`{ line: 2, ch: 0 }`, `{ line: 2, ch: ed.getLine(2).length }`));
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:copy-plaintext`)}); return true;`);
+    const clip1 = kopierenOffen ? await warteClip(1) : null;
+    await cdp.evaluate(waehle(`{ line: 0, ch: 0 }`, `{ line: 0, ch: 0 }`));
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:copy-plaintext`)}); return true;`);
+    const clip2 = clip1 ? await warteClip(2) : null;
+    await cdp.evaluate(`const p = ${P}; if (!p) return false; p.settings.copyMode = "as-shown"; p.emitChange(); return true;`);
+    await cdp.evaluate(waehle(`{ line: 2, ch: 0 }`, `{ line: 2, ch: ed.getLine(2).length }`));
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:copy-placeholders`)}); return true;`);
+    const clip3 = clip2 ? await warteClip(3) : null;
+    // Ein unlesbarer Platzhalter in der Lesesicht-Notiz: nichts geht hinaus, die Notice nennt Platzhalter und nie Klartext.
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LESEN)}, { focus: true }); return true;`);
+    await clearNotices(cdp);
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:copy-plaintext`)}); return true;`);
+    await new Promise((r) => setTimeout(r, 800));
+    const hinweisM = await notices(cdp);
+    const nachRefusal = await cdp.evaluate<number>(`return window.__pseuClip ? window.__pseuClip.length : -1;`);
+    await cdp.evaluate(ZWISCHENABLAGE_AUS);
+    await cdp.evaluate(SCHALTER_ZURUECK);
+    await cdp.evaluate(`const l = ${BLATT(NOTIZ_KOPIEREN)}; if (l) l.detach(); return true;`);
+    record("M Befehle „Mit Klartext kopieren“ und „Mit Platzhaltern kopieren“: Auswahl und ganze Notiz in der Zwischenablage, ein unlesbarer Platzhalter hält alles zurück und steht (ohne Klartext) in der Notice",
+      Boolean(clip1) && clip1![0] === "Erste Zeile: Max Mustermann und Berta Beispiel."
+        && Boolean(clip2) && clip2![1]!.startsWith("# Kopieren") && clip2![1]!.includes("Max Mustermann") && clip2![1]!.includes("max@example.org") && !clip2![1]!.includes("Person_")
+        && Boolean(clip3) && clip3![2] === `Erste Zeile: ${MAX} und Person_${FREMD2_ID}.`
+        && nachRefusal === 3 && hinweisM.includes("Person_a2b3c4d5e6") && !KLARTEXT.test(hinweisM),
+      `Auswahl=${q(clip1?.[0] ?? null)}, ganze Notiz beginnt ${q(clip2?.[1]?.slice(0, 40) ?? null)}, Platzhalter=${q(clip3?.[2] ?? null)}, Schreibvorgänge nach Verweigerung=${nachRefusal} (erwartet 3), Notice=${q(hinweisM.slice(0, 200))}`);
+    await clearNotices(cdp);
+
+    // --- N ---
+    console.log("\nN · Sperren und Entsperren");
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LESEN)}, { focus: true }); return true;`);
+    await cdp.evaluate(`const p = ${P}; if (!p) return false; p.keys.clear(); await p.refreshTables(); return true;`);
+    const gesperrtN = await pollUntil<Lesestand>(cdp, `
+      const st = (() => { ${LESESTAND(NOTIZ_LESEN)} })();
+      return st && st.stellen.length >= 8 && st.stellen.every((x) => x.unreadable) ? st : null;
+    `, 12_000, 250);
+    await cdp.evaluate(`
+      const p = ${P}; if (!p) return false;
+      const k = ${q(schluesselW)};
+      if (!k) return false;
+      p.keys.write({ chainId: Uint8Array.from(k.chainId), stand: k.stand, key: Uint8Array.from(k.key) });
+      await p.refreshTables();
+      return true;
+    `);
+    const entsperrtN = await pollUntil<Lesestand>(cdp, `
+      const st = (() => { ${LESESTAND(NOTIZ_LESEN)} })();
+      return st && st.stellen.filter((x) => x.shown).length >= 7 ? st : null;
+    `, 12_000, 250);
+    record("N Sperren und Entsperren schalten gezeigte Stellen ohne Neuöffnen um: gesperrt nicht lesbar mit Grund und ohne Klartext im DOM, entsperrt wieder Klartext",
+      schluesselW !== null && Boolean(gesperrtN) && gesperrtN!.stellen.every((x) => x.text === x.raw && /locked on this device/.test(x.title) && x.linie === "dashed") && !KLARTEXT.test(gesperrtN!.html)
+        && Boolean(entsperrtN) && entsperrtN!.stellen.filter((x) => x.shown).length >= 7,
+      `Schlüssel gemerkt=${schluesselW !== null}, gesperrt: ${q(gesperrtN ? { stellen: gesperrtN.stellen.length, titel: gesperrtN.stellen[0]?.title, linie: gesperrtN.stellen[0]?.linie, klartext: KLARTEXT.test(gesperrtN.html) } : null)}, entsperrt: ${q(entsperrtN ? { gezeigt: entsperrtN.stellen.filter((x) => x.shown).length } : null)}`);
+
+    // --- O ---
+    console.log("\nO · Popout-Fenster");
+    const popout = await cdp.evaluate<{ anderes: boolean } | null>(`
+      const f = app.vault.getAbstractFileByPath(${q(NOTIZ_LESEN)});
+      if (!f) return null;
+      const leaf = app.workspace.openPopoutLeaf();
+      await leaf.openFile(f, { state: { mode: "preview" } });
+      leaf.view.containerEl.setAttribute("data-pseu-smoke", "popout");
+      window.__pseuPop = leaf;
+      return { anderes: leaf.view.containerEl.ownerDocument !== document };
+    `);
+    const POP = `window.__pseuPop.view.containerEl`;
+    const popStand = (bedingung: string): string => `
+      const c = window.__pseuPop ? ${POP} : null;
+      if (!c) return null;
+      const els = Array.from(c.querySelectorAll(".okit-swap"));
+      if (!(${bedingung})) return null;
+      return { n: els.length, texte: els.map((e) => e.textContent) };
+    `;
+    const popAn = popout ? await pollUntil<{ n: number; texte: string[] }>(cdp, popStand(`els.length >= 8 && els.filter((e) => e.classList.contains("is-shown")).length >= 7`), 10_000, 250) : null;
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:toggle-plaintext`)}); return true;`);
+    const popAus = popAn ? await pollUntil<{ n: number; texte: string[] }>(cdp, popStand(`els.length >= 8 && els.every((e) => e.textContent === e.getAttribute("data-okit-swap"))`), 8000, 250) : null;
+    const popKopie = popAus ? await cdp.evaluate<Kopie>(KOPIERE(`window.__pseuPop.view.containerEl.ownerDocument`, `
+      const doc = window.__pseuPop.view.containerEl.ownerDocument;
+      const r = doc.createRange(); r.selectNodeContents(window.__pseuPop.view.containerEl.querySelectorAll("p")[0]); return r;
+    `)) : null;
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:toggle-plaintext`)}); return true;`);
+    const popWieder = popAus ? await pollUntil<{ n: number; texte: string[] }>(cdp, popStand(`els.filter((e) => e.classList.contains("is-shown")).length >= 7`), 8000, 250) : null;
+    const popGeschlossen = await cdp.evaluate<boolean>(`if (window.__pseuPop) { window.__pseuPop.detach(); delete window.__pseuPop; } return true;`);
+    record("O Popout-Fenster: Umschalter und Kopieren wirken auch im eigenen document des Popouts",
+      popout !== null && popout.anderes && Boolean(popAn) && popAn!.texte.includes("Max Mustermann")
+        && Boolean(popAus) && !popAus!.texte.some((x) => KLARTEXT.test(x))
+        && popKopie !== null && popKopie.abgefangen && popKopie.text.trim() === ersterAbsatz && !KLARTEXT.test(popKopie.html)
+        && Boolean(popWieder) && popGeschlossen,
+      `eigenes document=${popout?.anderes ?? null}, an=${q(popAn ? popAn.texte.slice(0, 2) : null)}, aus ohne Klartext=${Boolean(popAus)}, Kopie=${q(popKopie ? { abgefangen: popKopie.abgefangen, text: popKopie.text.trim().slice(0, 60) } : null)}, wieder an=${Boolean(popWieder)}`);
+
+    // --- Q ---
+    console.log("\nQ · Ziehen mit der Maus");
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LESEN)}, { focus: true }); return true;`);
+    const zug = lesenOffen ? await messeZiehen(cdp, NOTIZ_LESEN) : null;
+    const zugText = zug ? zug.items.find((i) => i.mimeType === "text/plain")?.data ?? null : null;
+    record("Q Ziehen markierten Texts aus der Lesesicht (echter Mauszug, Input.setInterceptDrags): der Zug trägt in der Vorgabe den Platzhalter, nie den Klartext",
+      zug !== null && zugText !== null && zugText.includes(MAX) && !zug.items.some((i) => KLARTEXT.test(i.data)),
+      `Zug abgefangen=${zug !== null}, Daten=${q(zug ? zug.items.map((i) => ({ art: i.mimeType, anfang: i.data.slice(0, 60) })) : null)}${zug !== null && zug.items.some((i) => KLARTEXT.test(i.data)) ? " — KLARTEXT IM ZUG: Grenze für die README" : ""}`);
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LESEN)}, { focus: true }); return true;`);
+
+    // --- P ---
+    console.log("\nP · PDF-Export");
+    const pdfOrdner = mkdtempSync(join(tmpdir(), "pseudonymizer-pdf-"));
+    let pdfAn: { ok: boolean; grund: string } = { ok: false, grund: "nicht gelaufen" };
+    let pdfAus: { ok: boolean; grund: string } = { ok: false, grund: "nicht gelaufen" };
+    let textAn: string | null = null;
+    let textAus: string | null = null;
+    try {
+      const kopierenPdf = await oeffneNotiz(cdp, NOTIZ_KOPIEREN, "preview", 3);
+      if (kopierenPdf) {
+        pdfAn = await exportiereAlsPdf(cdp, NOTIZ_KOPIEREN, join(pdfOrdner, "an.pdf"));
+        textAn = pdfAn.ok ? (pdfText(join(pdfOrdner, "an.pdf")) ?? "") : null;
+        await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:toggle-plaintext`)}); return true;`);
+        await pollUntil<boolean>(cdp, `const c = ${WURZEL(NOTIZ_KOPIEREN)}; const els = c ? Array.from(c.querySelectorAll(".okit-swap")) : []; return els.length >= 3 && els.every((e) => e.textContent === e.getAttribute("data-okit-swap")) ? true : null;`, 8000, 250);
+        pdfAus = await exportiereAlsPdf(cdp, NOTIZ_KOPIEREN, join(pdfOrdner, "aus.pdf"));
+        textAus = pdfAus.ok ? (pdfText(join(pdfOrdner, "aus.pdf")) ?? "") : null;
+      }
+    } finally {
+      await cdp.evaluate(`if (window.__pseuSaveOrig) { window.require("electron").remote.dialog.showSaveDialog = window.__pseuSaveOrig; delete window.__pseuSaveOrig; } return true;`);
+      await cdp.evaluate(SCHALTER_ZURUECK);
+      rmSync(pdfOrdner, { recursive: true, force: true });
+    }
+    const glatt = (t: string | null): string => (t ?? "").replace(/\s+/g, " ");
+    record("P PDF-Export (Speicherdialog im Renderer ersetzt): mit „Klartext zeigen“ trägt das PDF den Klartext und nicht den Platzhalter, ohne den Platzhalter und nicht den Klartext",
+      pdfAn.ok && pdfAus.ok && textAn !== null && textAus !== null && textAn !== "" && textAus !== ""
+        && glatt(textAn).includes("Max Mustermann") && glatt(textAn).includes("Berta Beispiel") && glatt(textAn).includes("max@example.org") && !glatt(textAn).includes(MAX) && !glatt(textAn).includes(`Person_${FREMD2_ID}`)
+        && glatt(textAus).includes(MAX) && glatt(textAus).includes(`Person_${FREMD2_ID}`) && !KLARTEXT.test(glatt(textAus)),
+      `Export an=${pdfAn.ok ? "ja" : pdfAn.grund}, Export aus=${pdfAus.ok ? "ja" : pdfAus.grund}, pdftotext=${textAn === "" ? "fehlt oder leer" : "da"}, PDF an enthält Klartext=${glatt(textAn).includes("Max Mustermann")} und Platzhalter=${glatt(textAn).includes(MAX)}, PDF aus enthält Platzhalter=${glatt(textAus).includes(MAX)} und Klartext=${KLARTEXT.test(glatt(textAus))}`);
+    await cdp.evaluate(`const l = ${BLATT(NOTIZ_KOPIEREN)}; if (l) l.detach(); return true;`);
+    await clearNotices(cdp);
+
     // --- Z ---
     console.log("\nZ · Person vergessen");
     const vorZ = await leseSchluessel(cdp);
@@ -607,6 +1049,24 @@ async function main(): Promise<void> {
         && Boolean(fortschritt) && /1 of 2 devices have caught up/.test(fortschritt!) && /key stand 0; the current stand is 1/.test(fortschritt!),
       `Liste=${q(liste)}, gewählt=${gewaehlt}, Warndialog=${q(warndialog ? { titel: warndialog.titel, zerstoerend: warndialog.zerstoerend } : null)} Inhalt ok=${warnOk}, restore=${q(vergessen)}, Berta=${q(bertaNoch)}, Stand ${vorZ?.stand ?? null} -> ${nachZ?.stand ?? null}, Datei Stand=${dateiZ?.stand ?? null}, ohne Klartext der Person (Berta als Gegenprobe lesbar)=${klartextWeg}, Reiter=${q(fortschritt ? fortschritt.slice(0, 160) : null)}`);
     await clearNotices(cdp);
+
+    // --- J ---
+    console.log("\nJ · Vergessen in der offenen Lesesicht");
+    const nachVergessen = lesenOffen ? await pollUntil<Lesestand>(cdp, `
+      const st = (() => { ${LESESTAND(NOTIZ_LESEN)} })();
+      if (!st) return null;
+      const max = st.stellen.filter((x) => x.raw.toLowerCase().startsWith(${q(MAX.toLowerCase())}));
+      return max.length >= 7 && max.every((x) => x.forgotten) ? st : null;
+    `, 20_000, 300) : null;
+    const maxStellen = nachVergessen ? nachVergessen.stellen.filter((x) => x.raw.toLowerCase().startsWith(MAX.toLowerCase())) : [];
+    const bertaStelle = nachVergessen ? nachVergessen.stellen.filter((x) => x.raw === `Person_${FREMD2_ID}`) : [];
+    record("J Vergessen in der offenen Lesesicht: die Stellen der vergessenen Person schalten ohne Neuöffnen auf „vergessen“ (Klasse, Tooltip, kein Klartext im DOM), die der anderen Person bleiben lesbar",
+      Boolean(nachVergessen) && maxStellen.length >= 7 && maxStellen.every((x) => x.text === x.raw && /forgotten/.test(x.title) && x.linie === "double")
+        && !KLARTEXT_MAX.test(nachVergessen!.html) && nachVergessen!.klartextInAttribut === 0
+        && bertaStelle.length === 1 && bertaStelle[0]!.shown && bertaStelle[0]!.text === "Berta Beispiel",
+      `Stellen der vergessenen Person=${maxStellen.length} (alle vergessen=${maxStellen.every((x) => x.forgotten)}), Klartext von Max im DOM=${nachVergessen ? KLARTEXT_MAX.test(nachVergessen.html) : null}, Berta=${q(bertaStelle.map((x) => x.text))}`);
+    await cdp.evaluate(`const l = ${BLATT(NOTIZ_LESEN)}; if (l) l.detach(); return true;`);
+    await cdp.send("Network.disable");
 
     // --- D ---
     console.log("\nD · Gerät entfernen");

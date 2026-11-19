@@ -75,7 +75,8 @@
         "secrets",
         "segmented-control",
         "status-bar-item",
-        "status-indicator"
+        "status-indicator",
+        "text-swap"
       ],
       "rewrite": [
         [

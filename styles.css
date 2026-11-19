@@ -179,3 +179,10 @@ textarea.okit-prompt-field { resize: vertical; min-height: calc(var(--size-4-12)
 /* Die Meldung ist Text (der zweite Kanal neben der Randfarbe); leer behält sie ihren Platz nicht, der Dialog darf beim ersten Fehler wachsen. */
 .okit-prompt-error { margin: var(--size-4-1) 0 0; color: var(--text-error); font-size: var(--font-ui-small); }
 .okit-prompt-error:empty { display: none; }
+
+/* Kit: text-swap (obsidian-kit 0.106.0) */
+/* Eingeblendete Stelle in der Lesesicht: die Art steht in der Linie (gepunktet = Klartext, gestrichelt = nicht lesbar, doppelt = vergessen), nicht in der Farbe. */
+.okit-swap.is-shown { border-bottom: 1px dotted currentcolor; }
+.okit-swap.is-unreadable { border-bottom: 1px dashed currentcolor; opacity: 0.7; }
+.okit-swap.is-forgotten { border-bottom: 3px double currentcolor; opacity: 0.7; }
+.okit-swap-measure { position: fixed; left: -99999px; top: 0; width: 1px; overflow: hidden; }

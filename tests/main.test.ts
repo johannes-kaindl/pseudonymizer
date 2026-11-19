@@ -14,7 +14,7 @@ function load(fs: FakeFs = new FakeFs("_pseudonymizer"), secrets: Map<string, st
     loadLocalStorage: (k: string) => store.get(k) ?? null,
     saveLocalStorage: (k: string, v: unknown) => { store.set(k, v); },
     secretStorage: { getSecret: (id: string) => secrets.get(id) ?? "", setSecret: (id: string, v: string) => { secrets.set(id, v); } },
-    workspace: { onLayoutReady: (cb: () => void) => { cb(); } },
+    workspace: { onLayoutReady: (cb: () => void) => { cb(); }, on: () => ({}), iterateAllLeaves: () => undefined, containerEl: { ownerDocument: { body: { querySelectorAll: () => [] } } } },
     vault: {
       configDir: ".obsidian",
       adapter: fs.adapter,
@@ -48,6 +48,23 @@ describe("PseudonymizerPlugin", () => {
     expect(plugin.api.status()).toEqual({ state: "not-set-up" });
     plugin.engine = { ...plugin.engine, state: () => "ready" } as Engine;
     expect(plugin.api.status()).toEqual({ state: "ready" });
+  });
+  it("wires the reading view and a copy handler, refreshes the reading view on every change and lets go on unload", async () => {
+    const { plugin } = load();
+    const spy = plugin as unknown as { registerMarkdownPostProcessor(h: unknown): void; registerDomEvent(...a: unknown[]): void };
+    const post = vi.spyOn(spy, "registerMarkdownPostProcessor");
+    const dom = vi.spyOn(spy, "registerDomEvent");
+    await plugin.onload();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(dom).toHaveBeenCalledWith(expect.anything(), "copy", expect.any(Function));
+    const hook = vi.fn();
+    plugin.reading.onRefresh(hook);
+    plugin.emitChange();
+    plugin.run("toggle-plaintext");
+    expect(hook).toHaveBeenCalledTimes(2);
+    plugin.onunload();
+    plugin.emitChange();
+    expect(hook).toHaveBeenCalledTimes(2);
   });
   it("registers the view, thirteen commands with icons and a status bar entry", async () => {
     const { plugin } = load();

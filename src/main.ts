@@ -24,6 +24,8 @@ import { runEnterCode, runSetUp, runShowCode, type SetupHost } from "./obsidian/
 import { createSetupUi } from "./obsidian/setup-ui";
 import { createTableStore, type FileProblem, type TableStore } from "./obsidian/table-store";
 import { createPluginStatusBar, type PluginStatusBar } from "./obsidian/status-bar";
+import { registerCopyHandlers } from "./obsidian/copy";
+import { setUpReading, swapOptions, type ReadingHandle } from "./obsidian/reading";
 import { PseudonymizerView } from "./obsidian/view";
 import { PseudonymizerSettingTab } from "./obsidian/settings-tab";
 
@@ -65,6 +67,8 @@ export default class PseudonymizerPlugin extends Plugin {
   private stopWatching: (() => void) | null = null;
   private tablesFolder: string | null = null;
   private statusBar: PluginStatusBar | null = null;
+  /** Die Lesesicht: Postprozessor und Auffrischen (Aufgabe 16); Aufgabe 17 hängt die Live Preview über `onRefresh` an. */
+  reading!: ReadingHandle;
   private readonly changeListeners = new Set<() => void>();
 
   async onload(): Promise<void> {
@@ -85,6 +89,10 @@ export default class PseudonymizerPlugin extends Plugin {
       removeDevice: (deviceId) => { void this.runRemoveDevice(deviceId); },
     }));
     registerCommands(this, this);
+    // Einblenden in der Lesesicht und Kopieren (Spec 8.6): ein Postprozessor, ein Kopier-Handler je Fenster, Auffrischen bei jeder Änderung von Schalter, Zustand und Tabelle.
+    const swap = swapOptions(this.memory, () => this.device.showPlaintext);
+    this.reading = setUpReading(this, { app: this.app, options: swap, onChange: (cb) => this.onChange(cb) });
+    registerCopyHandlers(this, this.app, { options: swap, copyMode: () => this.settings.copyMode });
     this.addSettingTab(new PseudonymizerSettingTab(this.app, this));
     this.statusBar = createPluginStatusBar({
       plugin: this,
@@ -101,6 +109,7 @@ export default class PseudonymizerPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.reading.dispose();
     this.stopWatching?.();
     this.stopWatching = null;
     this.tableStore = null;
