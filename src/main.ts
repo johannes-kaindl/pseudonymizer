@@ -19,6 +19,8 @@ import { registerCommands, runCommand } from "./obsidian/commands";
 import { createDeviceState, type DeviceState } from "./obsidian/device";
 import { createKeyStore, type KeyStore } from "./obsidian/key-store";
 import { runForget } from "./obsidian/forget";
+import { createPersonsApi, type PersonsApi } from "./obsidian/persons-actions";
+import { createPersonsUi } from "./obsidian/persons-ui";
 import { runRemoveDevice, runReplaceKey, type KeyActionsHost } from "./obsidian/key-actions";
 import { createKeyActionsUi } from "./obsidian/key-actions-ui";
 import { pseudonymizeNote, pseudonymizeSelection, type NoteHost } from "./obsidian/note-actions";
@@ -90,6 +92,7 @@ export default class PseudonymizerPlugin extends Plugin {
       deviceName: () => this.device.deviceName,
       setDeviceName: (name) => { this.setDeviceName(name); },
       removeDevice: (deviceId) => { void this.runRemoveDevice(deviceId); },
+      persons: this.persons(),
     }));
     registerCommands(this, this);
     // Einblenden in der Lesesicht und Kopieren (Spec 8.6): ein Postprozessor, ein Kopier-Handler je Fenster, Auffrischen bei jeder Änderung von Schalter, Zustand und Tabelle.
@@ -249,6 +252,17 @@ export default class PseudonymizerPlugin extends Plugin {
     const store = this.tableStore;
     if (store === null) { new Notice(t("notice.failed")); return null; }
     return { store, memory: this.memory, ownDeviceId: () => this.deviceId, ui: createKeyActionsUi(this.app), changed: () => { this.emitChange(); } };
+  }
+
+  /** Die Handlungen der Ansicht Personen und Ausnahmen: Schreiben über `persist` des Bausteins der Gerätedateien (dieselbe Warteschlange wie `engine.persist`), Vergessen über den vorhandenen Ablauf. */
+  private persons(): PersonsApi {
+    return createPersonsApi({
+      memory: this.memory,
+      persist: (change) => this.tableStore?.persist(change) ?? Promise.resolve({ error: "not-ready" }),
+      forget: async (id) => { const h = this.keyActionsHost(); if (h !== null) await runForget(h, id); },
+      ui: createPersonsUi(this.app),
+      changed: () => { this.emitChange(); },
+    });
   }
 
   /** Die Befehle für Auswahl und Notiz: Schreiben der Tabelle über den Baustein der Gerätedateien (Warteschlange), die Notiz über die Schreib-Ports des Kits. */

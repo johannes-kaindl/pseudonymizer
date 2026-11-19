@@ -156,6 +156,47 @@
 /* Tippfläche mindestens 44 px am Telefon (UI-STANDARD). */
 .is-mobile .pseu-devices-actions button, .is-mobile .pseu-device-remove { min-height: var(--size-4-11); }
 
+/* Reiter Personen und Ausnahmen: Listen-Zeile vertikal (Name, Art und Zahl, aufgeklappt die Werte), Status und Zustand immer auch als Text. */
+.pseu-persons-panel, .pseu-exceptions-panel { display: flex; flex-direction: column; gap: var(--size-4-2); }
+.pseu-search { width: 100%; box-sizing: border-box; }
+.pseu-persons-list { display: flex; flex-direction: column; gap: var(--size-4-2); }
+.pseu-persons, .pseu-forms, .pseu-exceptions { margin: 0; padding: 0; list-style: none; }
+.pseu-person { border-bottom: 1px solid var(--background-modifier-border); }
+.pseu-person-head {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--size-2-1);
+  width: 100%; height: auto; margin: 0; padding: var(--size-4-2) 0;
+  border: 0; border-radius: 0; box-shadow: none; background: transparent; color: var(--text-normal);
+  text-align: start; cursor: var(--cursor);
+}
+.pseu-person-head:hover { background: var(--background-modifier-hover); }
+.pseu-person-head:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
+.pseu-person-label { font-weight: var(--font-semibold); overflow-wrap: anywhere; }
+/* Der aufgeklappte Eintrag trägt einen Pfeil im Text der Zeile, nicht nur eine Farbe. */
+.pseu-person.is-open .pseu-person-label::before { content: "\25BE\00a0"; }
+.pseu-person:not(.is-open) .pseu-person-label::before { content: "\25B8\00a0"; }
+.pseu-person-meta { color: var(--text-muted); font-size: var(--font-ui-small); }
+.pseu-person-detail { display: flex; flex-direction: column; gap: var(--size-4-2); padding: 0 0 var(--size-4-3) var(--size-4-3); }
+.pseu-form {
+  display: flex; flex-direction: column; gap: var(--size-2-1);
+  padding: var(--size-2-3) 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.pseu-form-main { display: flex; flex-wrap: wrap; gap: var(--size-4-2); align-items: baseline; }
+.pseu-form-field { color: var(--text-muted); font-size: var(--font-ui-small); }
+.pseu-form-text { overflow-wrap: anywhere; }
+.pseu-form-placeholder { font-family: var(--font-monospace); color: var(--text-muted); font-size: var(--font-ui-small); overflow-wrap: anywhere; }
+.pseu-form-detach { align-self: flex-start; }
+.pseu-person-actions, .pseu-exceptions-actions { display: flex; flex-wrap: wrap; gap: var(--size-4-2); }
+.pseu-exception {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--size-4-2);
+  padding: var(--size-4-2) 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.pseu-exception-text { overflow-wrap: anywhere; }
+/* Tippfläche mindestens 44 px am Telefon (UI-STANDARD). */
+.is-mobile .pseu-person-head, .is-mobile .pseu-person-actions button, .is-mobile .pseu-form-detach,
+.is-mobile .pseu-exception-remove, .is-mobile .pseu-exception-add, .is-mobile .pseu-search { min-height: var(--size-4-11); }
+
 /* Personenwahl beim Vergessen: Bezeichnung und, kleiner darunter, Art und Zahl der Werte. */
 .pseu-suggest-label { overflow-wrap: anywhere; }
 .pseu-suggest-meta { color: var(--text-muted); font-size: var(--font-ui-smaller); }

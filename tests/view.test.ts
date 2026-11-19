@@ -34,6 +34,7 @@ function make(state: PluginState = "not-set-up", opts: { reason?: LockReason | n
     deviceName: () => name,
     setDeviceName: (n) => { names.push(n); name = n; },
     removeDevice: (id) => { removed.push(id); },
+    persons: { list: () => [], exceptions: () => [], merge: () => Promise.resolve(), detach: () => Promise.resolve(), forget: () => Promise.resolve(), addException: () => Promise.resolve(), removeException: () => Promise.resolve() },
   };
   const View = PseudonymizerView as unknown as new (leaf: unknown, host: ViewHost) => PseudonymizerView;
   const view = new View({}, host);
@@ -88,12 +89,13 @@ describe("PseudonymizerView", () => {
     expect(p.querySelectorAll(".pseu-empty")).toHaveLength(1);
   });
 
-  it("ready: persons and exceptions have their own empty state, no set-up buttons", async () => {
+  it("ready: persons and exceptions have their own empty state, no set-up buttons; the exceptions state offers to add one", async () => {
     const m = make("ready");
     await m.view.onOpen();
     const texts = panels(m.root()).slice(0, 2).map((p) => text(p.querySelectorAll(".pseu-empty")[0] as El));
     expect(new Set(texts).size).toBe(2);
-    for (const p of panels(m.root()).slice(0, 2)) expect(buttons(p)).toHaveLength(0);
+    expect(buttons(panels(m.root())[0])).toHaveLength(0);
+    expect(buttons(panels(m.root())[1]).map((b) => text(b))).toEqual(["Add exception"]);
   });
 
   it("locked with a key but no device file (table-missing): names the folder and the settings, offers 'Enter code' only, never 'Set up'", async () => {

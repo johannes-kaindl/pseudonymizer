@@ -6,14 +6,19 @@
 import { listPersons, planForget } from "../core/forget-plan";
 import { readyAfterRefresh, type KeyActionOutcome, type KeyActionsHost } from "./key-actions";
 
-export async function runForget(h: KeyActionsHost): Promise<KeyActionOutcome> {
+/** `preselected`: der Eintrag ist schon gewählt (die Ansicht Personen startet den Ablauf mit ihm); die Personenwahl entfällt, alles andere bleibt: frisch lesen, Plan, Warndialog, vergessen. */
+export async function runForget(h: KeyActionsHost, preselected?: string): Promise<KeyActionOutcome> {
   if (!(await readyAfterRefresh(h))) return "failed";
   const table = h.memory.table();
   if (table === null) { h.ui.notify("notice.locked"); return "failed"; }
   const options = listPersons(table, h.memory.language());
   if (options.length === 0) { h.ui.notify("notice.forget.none"); return "nothing"; }
-  const id = await h.ui.choosePerson(options);
-  if (id === null) return "cancelled";
+  // Ein vorgewählter Eintrag gilt über jede seiner IDs (die Gruppe kann sich seit dem Zeichnen der Ansicht geändert haben, etwa durch einen frisch gelesenen Link).
+  const id = preselected === undefined ? await h.ui.choosePerson(options) : (options.find((o) => o.ids.includes(preselected))?.id ?? null);
+  if (id === null) {
+    if (preselected !== undefined) h.ui.notify("notice.forget.failed.unknown-entry");
+    return preselected === undefined ? "cancelled" : "failed";
+  }
   // Der Plan beruht auf dem Stand nach dem Lesen und nach der Wahl; was dazwischen geschah, zeigt der nächste Lauf von `forget` (er liest ohnehin frisch).
   const now = h.memory.table();
   const plan = now === null ? null : planForget(now, h.memory.language(), id, h.memory.devices(), h.ownDeviceId());

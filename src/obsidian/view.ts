@@ -7,6 +7,9 @@ import { t } from "../vendor/kit/i18n";
 import { buildHubInto, type HubController, type HubPanel } from "../vendor/kit-obsidian/hub";
 import { buildStatus, paintStatus } from "../vendor/kit-obsidian/status-indicator";
 import { renderDeviceFiles, renderDevices } from "./devices-panel";
+import { renderExceptions } from "./exceptions-panel";
+import type { PersonsApi } from "./persons-actions";
+import { renderPersons, type PersonsPanelState } from "./persons-panel";
 
 /** Was die Ansicht vom Plugin braucht (`PseudonymizerPlugin` erfüllt es über Adapter in `main.ts`). */
 export interface ViewHost {
@@ -23,21 +26,20 @@ export interface ViewHost {
   setDeviceName(name: string): void;
   /** Entfernt ein fremdes Gerät (Dialog, Übernehmen, Löschen). */
   removeDevice(deviceId: string): void;
+  /** Die Handlungen und der Stand der Reiter Personen und Ausnahmen (Aufgabe 18). */
+  persons: PersonsApi;
 }
-
-const EMPTY_KEY: Record<Exclude<ViewTab, "devices">, string> = {
-  persons: "view.empty.persons",
-  exceptions: "view.empty.exceptions",
-};
 
 const LOCK_REASONS: readonly LockReason[] = ["no-key", "table-missing", "foreign-chain", "key-opens-nothing", "unreadable", "key-corrupt", "storage-failed", "key-replaced"];
 
-/** Ein Reiter: Zustand oben als Status-Indikator, darunter der Inhalt. „Geräte und Schlüssel“ ist seit Aufgabe 12 gefüllt, Personen und Ausnahmen zeigen bis Aufgabe 15 und 18 einen Leerzustand. */
+/** Ein Reiter: Zustand oben als Status-Indikator, darunter der Inhalt (nur im Zustand `ready`; sonst der Zustand mit seinem Ausweg und keine Handlung). */
 class TabPanel implements HubPanel<ViewTab> {
   private container: HTMLElement | null = null;
   private unsubscribe: (() => void) | null = null;
   /** Solange das Namensfeld den Fokus hat, malt eine Änderung die Seite nicht neu (sonst ginge die Eingabe verloren). */
   private editing = false;
+  /** Suche und aufgeklappter Eintrag des Reiters Personen überleben das Neuzeichnen. */
+  private readonly personsState: PersonsPanelState = { query: "", selected: null };
   constructor(private readonly tab: (typeof VIEW_TABS)[number], private readonly host: ViewHost) {}
 
   get id(): ViewTab { return this.tab.id; }
@@ -65,8 +67,10 @@ class TabPanel implements HubPanel<ViewTab> {
     paintStatus(buildStatus(c), ind.phase, t(ind.textKey));
 
     if (state === "ready") {
-      if (this.tab.id === "devices") renderDevices(c, this.host, (on) => { this.editing = on; if (!on) this.render(); });
-      else c.createDiv({ cls: "pseu-empty" }).createDiv({ text: t(EMPTY_KEY[this.tab.id]) });
+      const editing = (on: boolean): void => { this.editing = on; if (!on) this.render(); };
+      if (this.tab.id === "devices") renderDevices(c, this.host, editing);
+      else if (this.tab.id === "persons") renderPersons(c, this.host.persons, this.personsState);
+      else renderExceptions(c, this.host.persons);
       return;
     }
     const empty = c.createDiv({ cls: "pseu-empty" });

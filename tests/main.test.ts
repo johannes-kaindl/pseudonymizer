@@ -4,7 +4,7 @@ import type { Engine } from "../src/core/engine";
 import { isPseudonymizerApi } from "../src/vendor/kit/pseudonymizer-source";
 import { PseudonymizerSettingTab } from "../src/obsidian/settings-tab";
 import { FakeFs } from "./helpers/fake-fs";
-import { CHAIN, ID_A, contentAt, personTable, seedFile } from "./helpers/store-fixtures";
+import { CHAIN, ID_A, contentAt, makeDevice, personTable, seedFile } from "./helpers/store-fixtures";
 import { encodeRecoveryCode } from "../src/vendor/kit/recovery-code";
 import { Modal } from "./vendor/kit/obsidian-mock";
 
@@ -270,5 +270,39 @@ describe("PseudonymizerPlugin", () => {
     await flush();
     expect(plugin.api.status()).toEqual({ state: "locked" });
     expect(plugin.memory.reason()).toBe("table-missing");
+  });
+
+  it("the exception list is edited in the view, lands in the device file and never in data.json", async () => {
+    const fs = new FakeFs("_pseudonymizer");
+    await seedFile(fs, { deviceId: "dev-seed", stand: 0, table: personTable(ID_A, "Max Mustermann") });
+    const secrets = new Map<string, string>();
+    const code = encodeRecoveryCode(await contentAt(CHAIN, 0));
+    if (!code.ok) throw new Error("fixture");
+    secrets.set("pseudonymizer-key", code.code);
+    const { plugin } = load(fs, secrets);
+    await plugin.onload();
+    await flush();
+    await plugin.saveSettings();
+    const dataBefore = JSON.stringify(await plugin.loadData());
+    const factory = (plugin as unknown as { views: Record<string, (leaf: unknown) => { onOpen(): Promise<void>; contentEl: { children: any[] } }> }).views["pseudonymizer-view"];
+    const view = factory({ app: {} });
+    await view.onOpen();
+    const panel = (): any => view.contentEl.children[1].children[1];
+    const add = (): any => panel().querySelectorAll(".pseu-exception-add")[0];
+    add().click();
+    const prompt = Modal.__last as unknown as { contentEl: any };
+    const field = prompt.contentEl.querySelectorAll("input")[0];
+    field.value = "Beispiel GmbH";
+    prompt.contentEl.querySelectorAll("button").map((b: any) => b.__component).find((c: any) => c?.ctaSet).clickCB();
+    await flush();
+    expect(plugin.memory.table()?.exceptions.map((n) => n.text)).toEqual(["Beispiel GmbH"]);
+    expect(panel().querySelectorAll(".pseu-exception-text").map((e: any) => e.textContent)).toEqual(["Beispiel GmbH"]);
+    // die Datei dieses Geräts trägt die Ausnahme (ein zweites Gerät liest sie), data.json bleibt, wie es war
+    const reader = makeDevice(fs, { deviceId: "dev-reader", content: await contentAt(CHAIN, 0) });
+    await reader.store.refresh();
+    expect(reader.memory.table()?.exceptions.map((n) => n.text)).toEqual(["Beispiel GmbH"]);
+    await plugin.saveSettings();
+    expect(JSON.stringify(await plugin.loadData())).toBe(dataBefore);
+    expect(dataBefore).not.toContain("Beispiel");
   });
 });

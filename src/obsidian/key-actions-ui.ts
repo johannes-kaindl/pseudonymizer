@@ -19,12 +19,12 @@ const KIND_KEY: Record<EntryKind, string> = {
 class PersonModal extends SuggestModal<PersonOption> {
   private done: ((id: string | null) => void) | null;
 
-  constructor(app: App, private readonly options: readonly PersonOption[], done: (id: string | null) => void) {
+  constructor(app: App, private readonly options: readonly PersonOption[], done: (id: string | null) => void, purposeKey: string) {
     super(app);
     this.done = done;
     this.setPlaceholder(t("modal.forget.pick.placeholder"));
     this.emptyStateText = t("modal.forget.pick.empty");
-    this.setInstructions([{ command: "↵", purpose: t("modal.forget.pick.select") }]);
+    this.setInstructions([{ command: "↵", purpose: t(purposeKey) }]);
   }
 
   getSuggestions(query: string): PersonOption[] {
@@ -54,6 +54,11 @@ class PersonModal extends SuggestModal<PersonOption> {
   }
 }
 
+/** Die Personenwahl als Versprechen: die ID des gewählten Eintrags, `null` heißt Abbrechen. `purposeKey` ist der Textschlüssel für den Satz unter dem Feld („zum Vergessen“, „zum Zusammenführen“). */
+export function pickPerson(app: App, options: readonly PersonOption[], purposeKey = "modal.forget.pick.select"): Promise<string | null> {
+  return new Promise((resolve) => { new PersonModal(app, options, resolve, purposeKey).open(); });
+}
+
 /** Die Zeilen des Warndialogs „Person vergessen“ (Spec 8.3): unumkehrbar, die Werte, Abhängen, Geräte ohne lesbare Fassung, Ausnahmeliste, wann vollständig vergessen ist, Rest des alten Schlüssels. */
 export function forgetDialogLines(plan: ForgetPlan): string[] {
   const lines: string[] = [t("modal.forget.irreversible")];
@@ -70,7 +75,7 @@ export function forgetDialogLines(plan: ForgetPlan): string[] {
 
 export function createKeyActionsUi(app: App): KeyActionsUi {
   return {
-    choosePerson: (options) => new Promise((resolve) => { new PersonModal(app, options, resolve).open(); }),
+    choosePerson: (options) => pickPerson(app, options),
     confirmForget: (plan) => confirmAction(app, {
       title: t("modal.forget.title", plan.option.label),
       message: forgetDialogLines(plan),

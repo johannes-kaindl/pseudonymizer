@@ -60,6 +60,18 @@ async function readyDevice(fs: FakeFs, id: string, table: PlaceholderTable, log:
 const twoPersons = (): PlaceholderTable => personTable(ID_B, "Berta Beispiel", sampleTable());
 
 describe("runForget", () => {
+  it("mit vorgewähltem Eintrag entfällt die Personenwahl; auch eine zusammengeführte (nicht kleinste) ID wählt die Gruppe; eine unbekannte ID scheitert mit Meldung und vergisst nichts", async () => {
+    const fs = new FakeFs(FOLDER);
+    const a = await readyDevice(fs, "dev-a", twoPersons());
+    const ui = fakeUi([]);
+    expect(await runForget(host(a, ui), "zzzzzzzzzz")).toBe("failed");
+    expect(ui.notices.map((n) => n.key)).toEqual(["notice.forget.failed.unknown-entry"]);
+    expect(ui.offered).toHaveLength(0);
+    expect(await runForget(host(a, fakeUi([])), ID_B)).toBe("done");
+    expect(tableEntry(a.memory.table() as PlaceholderTable, ID_B)?.forgotten).toBe(true);
+    expect(tableEntry(a.memory.table() as PlaceholderTable, ID_A)?.forgotten).toBe(false);
+  });
+
   it("die Reihenfolge: frisch lesen, Person wählen, bestätigen, dann erst die Datei und DANN der Schlüssel", async () => {
     const fs = new FakeFs(FOLDER);
     const log: string[] = [];

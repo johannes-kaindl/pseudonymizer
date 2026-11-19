@@ -80,6 +80,13 @@ const PUNKTE = [
   "NA4 Der Eigenschaften-Bereich zeigt den Wert von from und den Listeneintrag von cc zeichengleich zur Datei",
   "NA5 Diese Notiz pseudonymisieren, im Prüffenster abgebrochen: die Notiz ist byte-gleich, die Notice nennt den Abbruch ohne Klartext",
   "NA6 Eine Notiz mit mail_id bleibt unberührt, es öffnet kein Prüffenster, die Notice verweist auf mailstone",
+  "AP1 Reiter Personen: die Suche (echte Eingabe) findet über Mail, Telefon in anderer Schreibweise, Namensteil und Großschreibung; ein Treffer ohne Ergebnis sagt es in Worten",
+  "AP2 Reiter Personen, Detail: ein Eintrag klappt auf (aria-expanded), zeigt jeden Wert mit Feld, Klartext und Platzhalter, je Wert „Wert abhängen“, darunter Zusammenführen und Vergessen (mod-warning); kein Klartext in einem aria-label",
+  "AP3 Zusammenführen aus dem Reiter: Partnerwahl, Bestätigung (nicht zerstörend), danach lösen beide Platzhalter-IDs weiter auf, die Ansicht zeigt einen Eintrag mit dem Hinweis auf beide Kennungen, die Gerätedatei auf der Platte trägt beide Namen",
+  "AP4 Wert abhängen aus dem Reiter: Bestätigung, der alte Platzhalter löst weiter auf, der Wert ist ein eigener Eintrag ohne Träger und steht nicht mehr beim alten Eintrag",
+  "AP5 Vergessen aus dem Reiter: derselbe Warndialog wie der Befehl, ohne Personenwahl; der abgehängte Wert fehlt in der Liste der Werte und bleibt nach dem Vergessen lesbar, die zusammengeführten IDs sind beide vergessen, die Gerätedatei trägt nur noch den abgehängten Wert",
+  "AP6 Reiter Ausnahmen: Leerzustand mit „Ausnahme hinzufügen“, Eingabe im Dialog, die Liste zeigt den Text, die Gerätedatei trägt ihn und data.json nicht; Entfernen leert die Liste wieder",
+  "AP7 Bilder der Reiter Personen und Ausnahmen (Desktop) und Tippflächen von mindestens 44 px am Telefon (nachgestellt über die Körperklasse is-mobile); die Bilder sind selbst anzusehen",
 ] as const;
 
 const bilanz = createBilanz({ punkte: PUNKTE });
@@ -176,6 +183,17 @@ const PERSONEN: FremdePerson[] = [
   { id: FREMD2_ID, name: "Berta Beispiel" },
 ];
 
+/** Zweite fremde Fassung für die Punkte AP: zwei erfundene Personen, Anna mit Mail und Telefon, damit Suche, Zusammenführen und Abhängen etwas zu tun haben. */
+const GERAET2 = "smoke-fremd2";
+const ANNA_ID = "h7n2p5r8st";
+const ANTON_ID = "w3x6y9z4bc";
+const ANNA_PLATZHALTER = `Person_${ANNA_ID}`;
+const ANTON_PLATZHALTER = `Person_${ANTON_ID}`;
+const PERSONEN2: FremdePerson[] = [
+  { id: ANNA_ID, name: "Anna Probe", mail: "anna@example.org", telefon: "030 5550101" },
+  { id: ANTON_ID, name: "Anton Probe" },
+];
+
 function tabelleVon(personen: readonly FremdePerson[]): PlaceholderTable | null {
   let t = emptyTable();
   for (const pe of personen) {
@@ -193,7 +211,7 @@ function tabelleVon(personen: readonly FremdePerson[]): PlaceholderTable | null 
 }
 
 /** Schreibt die Gerätedatei eines fremden Geräts in den Ordner, wie es der Sync täte: gleiche Kette, Stand wie der Schlüssel, mit dem Kit-Umschlag gebaut. Nur erfundene Werte. */
-async function schreibeFremdeFassung(basePath: string, k: SchluesselInhalt, personen: readonly FremdePerson[] = [{ id: FREMD_ID, name: "Max Mustermann" }]): Promise<string | null> {
+async function schreibeFremdeFassung(basePath: string, k: SchluesselInhalt, personen: readonly FremdePerson[] = [{ id: FREMD_ID, name: "Max Mustermann" }], ziel: { geraet: string; name: string } = { geraet: FREMD_GERAET, name: "iPhone (Treiber)" }): Promise<string | null> {
   const stand: ChainState = { chainId: Uint8Array.from(k.chainId), stand: k.stand, chainKey: Uint8Array.from(k.key) };
   const key = await encryptionKey(stand);
   if (!key.ok) return null;
@@ -201,15 +219,15 @@ async function schreibeFremdeFassung(basePath: string, k: SchluesselInhalt, pers
   if (tabelle === null) return null;
   const klar = encodePayload({
     format: "pseudonymizer-device", version: 1,
-    device: { name: "iPhone (Treiber)", codeShownAtStand: null },
+    device: { name: ziel.name, codeShownAtStand: null },
     vault: { language: "de" },
     table: serializeTable(tabelle),
   });
-  const sealed = await sealEnvelope(key.value, { deviceId: FREMD_GERAET, chainId: stand.chainId, stand: stand.stand }, klar);
+  const sealed = await sealEnvelope(key.value, { deviceId: ziel.geraet, chainId: stand.chainId, stand: stand.stand }, klar);
   if (!sealed.ok) return null;
   const ordner = join(basePath, ORDNER);
   mkdirSync(ordner, { recursive: true });
-  const datei = `${FREMD_GERAET}.pseudo`;
+  const datei = `${ziel.geraet}.pseudo`;
   writeFileSync(join(ordner, datei), sealed.bytes);
   return datei;
 }
@@ -1403,6 +1421,206 @@ async function main(): Promise<void> {
     await clearNotices(cdp);
     await cdp.evaluate(SCHLIESSE_NOTIZEN);
     await cdp.evaluate(LOESCHE_SMOKE_NOTIZEN);
+
+    // --- AP ---
+    // Geschrieben, noch nicht gelaufen (Rechner unter Last). Der Treiber legt eine zweite fremde Gerätedatei mit Anna und Anton Probe an (erfunden), arbeitet im Reiter und nimmt die Datei am Ende wieder weg,
+    // damit der Punkt D die Geräteliste vorfindet wie bisher. Die Eingaben im Suchfeld und im Ausnahme-Dialog sind echte (`Input.insertText`), die Klicks echte Mausklicks.
+    console.log("\nAP · Personen und Ausnahmen");
+    await setWindowSize(cdp, 1200, 800);
+    const PANEL = (n: number): string => `document.querySelectorAll(".pseu-root .pseu-panel")[${n}]`;
+    const ZEIGE_REITER = (id: string): string => `app.commands.executeCommandById(${q(`${PLUGIN_ID}:open-view`)}); const l = app.workspace.getLeavesOfType("pseudonymizer-view")[0]; if (l && l.view.showTab) l.view.showTab(${q(id)}); return true;`;
+    interface PersonenListe { items: { label: string; meta: string; expanded: string | null }[]; count: string; leer: string }
+    const PERS_LISTE = `
+      const p = ${PANEL(0)}; if (!p) return null;
+      const items = Array.from(p.querySelectorAll(".pseu-person")).map((li) => ({ label: li.querySelector(".pseu-person-label").textContent.trim(), meta: li.querySelector(".pseu-person-meta").textContent.trim(), expanded: li.querySelector(".pseu-person-head").getAttribute("aria-expanded") }));
+      const c = p.querySelector(".pseu-persons-count"); const e = p.querySelector(".pseu-empty");
+      return { items, count: c ? c.textContent.trim() : "", leer: e ? e.textContent.trim() : "" };
+    `;
+    const KOPF = (label: string): string => `(Array.from(${PANEL(0)}.querySelectorAll(".pseu-person")).find((li) => li.querySelector(".pseu-person-label").textContent.trim() === ${q(label)})?.querySelector(".pseu-person-head") || null)`;
+    const OFFEN = `(${PANEL(0)}.querySelector(".pseu-person.is-open") || null)`;
+    const sucheNach = async (text: string): Promise<PersonenListe | null> => {
+      await cdp.evaluate(`const i = ${PANEL(0)}.querySelector(".pseu-search"); i.focus(); i.select(); return true;`);
+      if (text === "") await cdp.evaluate(`const i = ${PANEL(0)}.querySelector(".pseu-search"); i.value = ""; i.dispatchEvent(new Event("input", { bubbles: true })); return true;`);
+      else await cdp.send("Input.insertText", { text });
+      await new Promise((r) => setTimeout(r, 300));
+      return cdp.evaluate<PersonenListe | null>(PERS_LISTE);
+    };
+    const labelsVon = (l: PersonenListe | null): string => (l ? l.items.map((x) => x.label).join("|") : "<keine Liste>");
+    const ansichtDir = mkdtempSync(join(tmpdir(), "pseu-ansicht-"));
+
+    const keyAP = await leseSchluessel(cdp);
+    const fremd2 = keyAP ? await schreibeFremdeFassung(info.basePath, keyAP, PERSONEN2, { geraet: GERAET2, name: "iPad (Treiber)" }) : null;
+    const gelesen2 = fremd2 ? await pollUntil<boolean>(cdp, `const r = ${P}.api.restore(${q(`Hallo ${ANNA_PLATZHALTER}`)}, { caller: "gui-smoke" }); return r && r.text === "Hallo Anna Probe" ? true : null;`, 30_000, 500) : null;
+    await cdp.evaluate(ZEIGE_REITER("persons"));
+    const persListeBereit = gelesen2 ? await pollUntil<PersonenListe>(cdp, `const l = (() => { ${PERS_LISTE} })(); return l && l.items.some((x) => x.label === "Anna Probe") ? l : null;`, 15_000, 300) : null;
+
+    // AP1: Suche über alle Formen mit echter Eingabe
+    const sAlle = persListeBereit;
+    const sMail = persListeBereit ? await sucheNach("ANNA@EXAMPLE.ORG") : null;
+    const sTel = persListeBereit ? await sucheNach("+49 30 5550101") : null;
+    const sTeil = persListeBereit ? await sucheNach("probe") : null;
+    const sAnton = persListeBereit ? await sucheNach("Anton") : null;
+    const sNichts = persListeBereit ? await sucheNach("gibt es nicht") : null;
+    const sLeer = persListeBereit ? await sucheNach("") : null;
+    record("AP1 Reiter Personen: die Suche (echte Eingabe) findet über Mail, Telefon in anderer Schreibweise, Namensteil und Großschreibung; ein Treffer ohne Ergebnis sagt es in Worten",
+      Boolean(sAlle) && labelsVon(sMail) === "Anna Probe" && labelsVon(sTel) === "Anna Probe" && Boolean(sTeil) && sTeil!.items.some((x) => x.label === "Anna Probe") && sTeil!.items.some((x) => x.label === "Anton Probe")
+        && labelsVon(sAnton) === "Anton Probe" && sNichts !== null && sNichts.items.length === 0 && sNichts.leer === "Nothing matches this search." && sLeer !== null && sLeer.items.length >= 2 && /^\d+ of \d+ entries$/.test(sLeer.count),
+      `Mail=${labelsVon(sMail)}, Telefon=${labelsVon(sTel)}, „probe“=${labelsVon(sTeil)}, „Anton“=${labelsVon(sAnton)}, ohne Treffer=${q(sNichts ? sNichts.leer : null)}, leere Suche=${sLeer ? sLeer.items.length : null} Einträge (${q(sLeer?.count)})`);
+
+    // AP2: Detail
+    const kopfAnna = persListeBereit ? await clickReal(cdp, KOPF("Anna Probe")) : false;
+    const detail = kopfAnna ? await pollUntil<{ forms: { feld: string; text: string; platzhalter: string; abhaengen: boolean }[]; knoepfe: { text: string; warnung: boolean }[]; expanded: string | null; labels: string[] }>(cdp, `
+      const li = ${OFFEN}; if (!li) return null;
+      const forms = Array.from(li.querySelectorAll(".pseu-form")).map((f) => ({ feld: f.querySelector(".pseu-form-field").textContent.trim(), text: f.querySelector(".pseu-form-text").textContent.trim(), platzhalter: f.querySelector(".pseu-form-placeholder").textContent.trim(), abhaengen: Boolean(f.querySelector(".pseu-form-detach")) }));
+      const knoepfe = Array.from(li.querySelectorAll(".pseu-person-actions button")).map((b) => ({ text: b.textContent.trim(), warnung: b.classList.contains("mod-warning") }));
+      const labels = Array.from(li.querySelectorAll("button")).map((b) => b.getAttribute("aria-label")).filter(Boolean);
+      return { forms, knoepfe, expanded: li.querySelector(".pseu-person-head").getAttribute("aria-expanded"), labels };
+    `, 8000, 250) : null;
+    const form = (platzhalter: string) => detail?.forms.find((f) => f.platzhalter === platzhalter);
+    record("AP2 Reiter Personen, Detail: ein Eintrag klappt auf (aria-expanded), zeigt jeden Wert mit Feld, Klartext und Platzhalter, je Wert „Wert abhängen“, darunter Zusammenführen und Vergessen (mod-warning); kein Klartext in einem aria-label",
+      Boolean(detail) && detail!.expanded === "true" && detail!.forms.length === 3
+        && form(ANNA_PLATZHALTER)?.text === "Anna Probe" && form(ANNA_PLATZHALTER)?.feld === "Name" && form(`${ANNA_PLATZHALTER}_Mail`)?.text === "anna@example.org" && form(`${ANNA_PLATZHALTER}_Mail`)?.feld === "Mail"
+        && form(`${ANNA_PLATZHALTER}_Telefon`)?.text === "030 5550101" && detail!.forms.every((f) => f.abhaengen)
+        && detail!.knoepfe.map((b) => b.text).join("|") === "Merge with another entry|Forget" && detail!.knoepfe[1]!.warnung && !detail!.knoepfe[0]!.warnung
+        && detail!.labels.length === 3 && detail!.labels.every((l) => l.includes("Person_") && !/Anna|anna@|5550101/.test(l)),
+      `Detail=${q(detail ? { forms: detail.forms.map((f) => [f.feld, f.platzhalter]), knoepfe: detail.knoepfe, expanded: detail.expanded, labels: detail.labels } : null)}`);
+    // Bild und Tippflächen (AP7) im Zustand „Anna aufgeklappt“
+    let bildPersonen = "";
+    let bildAusnahmen = "";
+    let flaechen: number[] = [];
+    if (detail) {
+      const box = await boxOf(cdp, ".pseu-root", 8);
+      bildPersonen = join(ansichtDir, "personen-desktop.png");
+      writeFileSync(bildPersonen, await capture(cdp, box ?? undefined, 1));
+      await cdp.evaluate(`document.body.classList.add("is-mobile"); return true;`);
+      await setWindowSize(cdp, 402, 874);
+      flaechen = await pollUntil<number[]>(cdp, `
+        const li = ${OFFEN}; if (!li) return null;
+        const hs = [li.querySelector(".pseu-person-head"), ...li.querySelectorAll(".pseu-person-actions button"), ...li.querySelectorAll(".pseu-form-detach")].filter(Boolean);
+        const sf = ${PANEL(0)}.querySelector(".pseu-search");
+        return [...hs, sf].map((e) => Math.round(e.getBoundingClientRect().height));
+      `, 8000, 250) ?? [];
+      await cdp.evaluate(`document.body.classList.remove("is-mobile"); return true;`);
+      await setWindowSize(cdp, 1200, 800);
+    }
+
+    // AP3: zusammenführen
+    const vorAP3 = await leseSchluessel(cdp);
+    const mergeKlick = detail ? await clickReal(cdp, `(${OFFEN}.querySelector(".pseu-person-merge") || null)`) : false;
+    const wahl = mergeKlick ? await pollUntil<boolean>(cdp, `return Array.from(document.querySelectorAll(".prompt .suggestion-item")).some((e) => e.textContent.includes("Anton Probe")) ? true : null;`, 8000, 200) : null;
+    const antonWahl = wahl ? await clickReal(cdp, `(Array.from(document.querySelectorAll(".prompt .suggestion-item")).find((e) => e.textContent.includes("Anton Probe")) || null)`) : false;
+    const mergeFrage = antonWahl ? await pollUntil<{ titel: string; text: string; cta: boolean; zerstoerend: boolean }>(cdp, `
+      const m = document.querySelector(".modal"); if (!m) return null;
+      const b = Array.from(m.querySelectorAll("button")).find((x) => x.textContent.trim() === "Merge");
+      const t = m.querySelector(".modal-title");
+      return b ? { titel: t ? t.textContent.trim() : "", text: m.textContent, cta: b.classList.contains("mod-cta"), zerstoerend: ${istZerstoerendJs("b")} } : null;
+    `, 8000, 250) : null;
+    const mergeOk = mergeFrage ? await klickeKnopf(cdp, "Merge") : false;
+    const mergeNotice = mergeOk ? await pollUntil<string>(cdp, NOTICE_MIT("Merged"), 10_000, 200) : null;
+    const nachMerge = mergeNotice ? await restoreVon(`${ANTON_PLATZHALTER} und ${ANNA_PLATZHALTER}_Mail`) : null;
+    const mergeListe = mergeNotice ? await pollUntil<PersonenListe & { hinweis: string }>(cdp, `
+      const l = (() => { ${PERS_LISTE} })(); const li = ${OFFEN}; const n = li ? li.querySelector(".pseu-person-detail > .pseu-note") : null;
+      return l && l.items.filter((x) => /Probe/.test(x.label)).length === 1 && n ? { ...l, hinweis: n.textContent.trim() } : null;
+    `, 10_000, 300) : null;
+    const dateiAP3 = vorAP3 && eigeneId ? await oeffneEigeneDatei(info.basePath, eigeneId, vorAP3) : null;
+    record("AP3 Zusammenführen aus dem Reiter: Partnerwahl, Bestätigung (nicht zerstörend), danach lösen beide Platzhalter-IDs weiter auf, die Ansicht zeigt einen Eintrag mit dem Hinweis auf beide Kennungen, die Gerätedatei auf der Platte trägt beide Namen",
+      Boolean(wahl) && antonWahl && Boolean(mergeFrage) && mergeFrage!.titel === "Merge two entries?" && mergeFrage!.cta && !mergeFrage!.zerstoerend && /Both identifiers keep resolving/.test(mergeFrage!.text)
+        && mergeOk && mergeNotice !== null && !/Anna|Anton|example/.test(mergeNotice) && nachMerge !== null && nachMerge.text === "Anton Probe und anna@example.org"
+        && Boolean(mergeListe) && /2 identifiers/.test(mergeListe!.hinweis) && dateiAP3 !== null && dateiAP3.tabelle.includes("Anton Probe") && dateiAP3.tabelle.includes("Anna Probe"),
+      `Wahl=${Boolean(wahl)}, Dialog=${q(mergeFrage ? { titel: mergeFrage.titel, cta: mergeFrage.cta, zerstoerend: mergeFrage.zerstoerend } : null)}, Notice=${q(mergeNotice)}, restore=${q(nachMerge?.text ?? nachMerge)}, Ansicht=${q(mergeListe ? { eintraege: mergeListe.items.length, hinweis: mergeListe.hinweis } : null)}, Datei trägt beide Namen=${dateiAP3 !== null && dateiAP3.tabelle.includes("Anton Probe") && dateiAP3.tabelle.includes("Anna Probe")}`);
+    await clearNotices(cdp);
+
+    // AP4: Wert abhängen (die Mail von Anna)
+    const mailKnopf = `(document.querySelector('.pseu-root button[aria-label=${q(`Detach the value of ${ANNA_PLATZHALTER}_Mail`)}]') || null)`;
+    const abKlick = mergeListe ? await clickReal(cdp, mailKnopf) : false;
+    const abFrage = abKlick ? await pollUntil<{ titel: string; text: string; zerstoerend: boolean }>(cdp, `
+      const m = document.querySelector(".modal"); if (!m) return null;
+      const b = Array.from(m.querySelectorAll("button")).find((x) => x.textContent.trim() === "Detach");
+      const t = m.querySelector(".modal-title");
+      return b ? { titel: t ? t.textContent.trim() : "", text: m.textContent, zerstoerend: ${istZerstoerendJs("b")} } : null;
+    `, 8000, 250) : null;
+    const abOk = abFrage ? await klickeKnopf(cdp, "Detach") : false;
+    const abNotice = abOk ? await pollUntil<string>(cdp, NOTICE_MIT("Detached"), 10_000, 200) : null;
+    const nachAb = abNotice ? await restoreVon(`${ANNA_PLATZHALTER}_Mail`) : null;
+    const abListe = abNotice ? await pollUntil<{ liste: PersonenListe; formen: string[] }>(cdp, `
+      const l = (() => { ${PERS_LISTE} })(); const li = ${OFFEN};
+      if (!l || !li) return null;
+      const formen = Array.from(li.querySelectorAll(".pseu-form-placeholder")).map((e) => e.textContent.trim());
+      return formen.length === 3 && !formen.includes(${q(`${ANNA_PLATZHALTER}_Mail`)}) && l.items.some((x) => x.label === "anna@example.org") ? { liste: l, formen } : null;
+    `, 10_000, 300) : null;
+    record("AP4 Wert abhängen aus dem Reiter: Bestätigung, der alte Platzhalter löst weiter auf, der Wert ist ein eigener Eintrag ohne Träger und steht nicht mehr beim alten Eintrag",
+      Boolean(abFrage) && abFrage!.titel === "Detach this value?" && !abFrage!.zerstoerend && abFrage!.text.includes(`${ANNA_PLATZHALTER}_Mail`) && /still carries the old identifier/.test(abFrage!.text)
+        && abOk && abNotice !== null && !/anna@|Anna/.test(abNotice) && nachAb !== null && nachAb.text === "anna@example.org" && Boolean(abListe)
+        && abListe!.liste.items.find((x) => x.label === "anna@example.org")!.meta.startsWith("No carrier"),
+      `Dialog=${q(abFrage ? { titel: abFrage.titel, zerstoerend: abFrage.zerstoerend } : null)}, Notice=${q(abNotice)}, restore=${q(nachAb?.text ?? nachAb)}, Formen beim alten Eintrag=${q(abListe?.formen)}, neuer Eintrag=${q(abListe?.liste.items.find((x) => x.label === "anna@example.org")?.meta)}`);
+    await clearNotices(cdp);
+
+    // AP5: Vergessen aus dem Reiter
+    const vorAP5 = await leseSchluessel(cdp);
+    const vergKlick = abListe ? await clickReal(cdp, `(${OFFEN}.querySelector(".pseu-person-forget") || null)`) : false;
+    const vergFrage = vergKlick ? await pollUntil<{ titel: string; text: string; zerstoerend: boolean; wahl: boolean }>(cdp, `
+      const m = document.querySelector(".modal"); if (!m) return null;
+      const b = Array.from(m.querySelectorAll("button")).find((x) => x.textContent.trim() === "Forget for good");
+      const t = m.querySelector(".modal-title");
+      return b ? { titel: t ? t.textContent.trim() : "", text: m.textContent, zerstoerend: ${istZerstoerendJs("b")}, wahl: Boolean(document.querySelector(".prompt")) } : null;
+    `, 8000, 250) : null;
+    const vergOk = vergFrage ? await klickeKnopf(cdp, "Forget for good") : false;
+    const nachVerg = vergOk ? await pollUntil<{ text: string; forgotten: string[] }>(cdp, `
+      const r = ${P}.api.restore(${q(`${ANNA_PLATZHALTER} ${ANTON_PLATZHALTER} ${ANNA_PLATZHALTER}_Mail`)}, { caller: "gui-smoke" });
+      return r && Array.isArray(r.forgotten) && r.forgotten.length > 0 ? { text: r.text, forgotten: r.forgotten } : null;
+    `, 15_000, 250) : null;
+    const nachAP5 = await leseSchluessel(cdp);
+    const dateiAP5 = nachAP5 && eigeneId ? await oeffneEigeneDatei(info.basePath, eigeneId, nachAP5) : null;
+    const dateiOhne = dateiAP5 !== null && dateiAP5.tabelle !== "" && dateiAP5.tabelle.includes("anna@example.org") && !/Anna Probe|Anton Probe|5550101/.test(dateiAP5.tabelle);
+    record("AP5 Vergessen aus dem Reiter: derselbe Warndialog wie der Befehl, ohne Personenwahl; der abgehängte Wert fehlt in der Liste der Werte und bleibt nach dem Vergessen lesbar, die zusammengeführten IDs sind beide vergessen, die Gerätedatei trägt nur noch den abgehängten Wert",
+      Boolean(vergFrage) && vergFrage!.titel === 'Forget "Anna Probe"?' && vergFrage!.zerstoerend && !vergFrage!.wahl && vergFrage!.text.includes("5550101") && vergFrage!.text.includes(`${ANNA_PLATZHALTER}_Telefon`)
+        && !vergFrage!.text.includes("anna@example.org") && /only when the version of every device carries the mark/.test(vergFrage!.text)
+        && vergOk && Boolean(nachVerg) && nachVerg!.text === `${ANNA_PLATZHALTER} ${ANTON_PLATZHALTER} anna@example.org` && nachVerg!.forgotten.includes(ANNA_PLATZHALTER) && nachVerg!.forgotten.includes(ANTON_PLATZHALTER)
+        && vorAP5 !== null && nachAP5 !== null && nachAP5.stand === vorAP5.stand + 1 && dateiOhne,
+      `Dialog=${q(vergFrage ? { titel: vergFrage.titel, zerstoerend: vergFrage.zerstoerend, personenwahl: vergFrage.wahl, nenntMail: vergFrage.text.includes("anna@example.org") } : null)}, restore=${q(nachVerg)}, Stand ${vorAP5?.stand ?? null} -> ${nachAP5?.stand ?? null}, Datei ohne Namen und Telefon, mit der abgehängten Mail=${dateiOhne}`);
+    await clearNotices(cdp);
+    // Die zweite fremde Datei verschwindet wieder (sie ist nach dem Vergessen ohnehin unlesbar), damit D die Geräteliste vorfindet wie bisher.
+    rmSync(join(info.basePath, ORDNER, `${GERAET2}.pseudo`), { force: true });
+
+    // AP6: Ausnahmen
+    await cdp.evaluate(ZEIGE_REITER("exceptions"));
+    const ausLeer = await pollUntil<{ text: string; knopf: string; cta: boolean }>(cdp, `
+      const p = ${PANEL(1)}; const e = p ? p.querySelector(".pseu-empty") : null; const b = e ? e.querySelector("button") : null;
+      return b ? { text: e.textContent, knopf: b.textContent.trim(), cta: b.classList.contains("mod-cta") } : null;
+    `, 8000, 250);
+    const addKlick = ausLeer ? await clickReal(cdp, `(${PANEL(1)}.querySelector(".pseu-exception-add") || null)`) : false;
+    const ausDialog = addKlick ? await pollUntil<string>(cdp, `const t = document.querySelector(".modal .modal-title"); return t && t.textContent.trim() === "Add an exception" && document.querySelector(".modal input") ? t.textContent.trim() : null;`, 8000, 200) : null;
+    if (ausDialog) {
+      await cdp.evaluate(`const i = document.querySelector(".modal input"); i.focus(); i.select(); return true;`);
+      await cdp.send("Input.insertText", { text: "Beispiel GmbH" });
+    }
+    const addOk = ausDialog ? await klickeKnopf(cdp, "Add") : false;
+    const addNotice = addOk ? await pollUntil<string>(cdp, NOTICE_MIT("Added to the exceptions"), 10_000, 200) : null;
+    const ausListe = addNotice ? await pollUntil<string[]>(cdp, `const e = Array.from(${PANEL(1)}.querySelectorAll(".pseu-exception-text")).map((x) => x.textContent.trim()); return e.length ? e : null;`, 8000, 250) : null;
+    const dataJson = join(info.basePath, info.configDir, "plugins", PLUGIN_ID, "data.json");
+    const dataJsonOhne = (): boolean => !existsSync(dataJson) || !/Beispiel/.test(readFileSync(dataJson, "utf8"));
+    const dateiAus = nachAP5 && eigeneId ? await oeffneEigeneDatei(info.basePath, eigeneId, nachAP5) : null;
+    if (ausListe) {
+      const box = await boxOf(cdp, ".pseu-root", 8);
+      bildAusnahmen = join(ansichtDir, "ausnahmen-desktop.png");
+      writeFileSync(bildAusnahmen, await capture(cdp, box ?? undefined, 1));
+    }
+    const entfKlick = ausListe ? await clickReal(cdp, `(${PANEL(1)}.querySelector(".pseu-exception-remove") || null)`) : false;
+    const entfNotice = entfKlick ? await pollUntil<string>(cdp, NOTICE_MIT("Removed from the exceptions"), 10_000, 200) : null;
+    const ausWieder = entfNotice ? await pollUntil<boolean>(cdp, `const p = ${PANEL(1)}; return p && p.querySelector(".pseu-empty") && !p.querySelector(".pseu-exception") ? true : null;`, 8000, 250) : null;
+    record("AP6 Reiter Ausnahmen: Leerzustand mit „Ausnahme hinzufügen“, Eingabe im Dialog, die Liste zeigt den Text, die Gerätedatei trägt ihn und data.json nicht; Entfernen leert die Liste wieder",
+      Boolean(ausLeer) && ausLeer!.knopf === "Add exception" && ausLeer!.cta && /No exceptions yet/.test(ausLeer!.text) && Boolean(ausDialog) && addOk && addNotice !== null && !/Beispiel/.test(addNotice)
+        && ausListe !== null && ausListe.join("|") === "Beispiel GmbH" && dateiAus !== null && dateiAus.tabelle.includes("Beispiel GmbH") && dataJsonOhne()
+        && entfKlick && entfNotice !== null && Boolean(ausWieder),
+      `Leerzustand=${q(ausLeer ? { knopf: ausLeer.knopf, cta: ausLeer.cta } : null)}, Dialog=${q(ausDialog)}, Notice=${q(addNotice)}, Liste=${q(ausListe)}, Gerätedatei trägt es=${dateiAus !== null && dateiAus.tabelle.includes("Beispiel GmbH")}, data.json ohne Text=${dataJsonOhne()}, entfernt=${q(entfNotice)}, wieder leer=${Boolean(ausWieder)}`);
+    await clearNotices(cdp);
+
+    // AP7: Bilder und Tippflächen
+    const groesse = (pfad: string): number => (pfad !== "" && existsSync(pfad) ? statSync(pfad).size : 0);
+    record("AP7 Bilder der Reiter Personen und Ausnahmen (Desktop) und Tippflächen von mindestens 44 px am Telefon (nachgestellt über die Körperklasse is-mobile); die Bilder sind selbst anzusehen",
+      groesse(bildPersonen) > 5000 && groesse(bildAusnahmen) > 5000 && flaechen.length >= 4 && flaechen.every((h) => h >= 44),
+      `Personen=${bildPersonen} (${groesse(bildPersonen)} B), Ausnahmen=${bildAusnahmen} (${groesse(bildAusnahmen)} B), Höhen am Telefon (Kopf, Zusammenführen, Vergessen, Wert abhängen ×3, Suchfeld)=${q(flaechen)} (nachgestellt, kein echtes Telefon)`);
+    await cdp.evaluate(ZEIGE_REITER("devices"));
 
     // --- D ---
     console.log("\nD · Gerät entfernen");
