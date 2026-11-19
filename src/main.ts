@@ -31,6 +31,7 @@ import { createTableStore, type FileProblem, type TableStore } from "./obsidian/
 import { createPluginStatusBar, type PluginStatusBar } from "./obsidian/status-bar";
 import { registerCopyHandlers } from "./obsidian/copy";
 import { setUpReading, swapOptions, type ReadingHandle } from "./obsidian/reading";
+import { setUpLivePreview } from "./obsidian/live-preview";
 import { PseudonymizerView } from "./obsidian/view";
 import { PseudonymizerSettingTab } from "./obsidian/settings-tab";
 
@@ -72,7 +73,7 @@ export default class PseudonymizerPlugin extends Plugin {
   private stopWatching: (() => void) | null = null;
   private tablesFolder: string | null = null;
   private statusBar: PluginStatusBar | null = null;
-  /** Die Lesesicht: Postprozessor und Auffrischen (Aufgabe 16); Aufgabe 17 hängt die Live Preview über `onRefresh` an. */
+  /** Die Lesesicht: Postprozessor und Auffrischen (Aufgabe 16); `setUpLivePreview` hängt die Live Preview über `onRefresh` an (Aufgabe 17). */
   reading!: ReadingHandle;
   private readonly changeListeners = new Set<() => void>();
 
@@ -99,6 +100,8 @@ export default class PseudonymizerPlugin extends Plugin {
     const swap = swapOptions(this.memory, () => this.device.showPlaintext);
     this.reading = setUpReading(this, { app: this.app, options: swap, onChange: (cb) => this.onChange(cb) });
     registerCopyHandlers(this, this.app, { options: swap, copyMode: () => this.settings.copyMode });
+    // Einblenden in Live Preview (Aufgabe 17): dieselben Optionen; das Auffrischen der Lesesicht zeichnet auch die Editoren neu (Kit-Kopf, B4).
+    setUpLivePreview(this, this.reading, { app: this.app, options: swap, copyMode: () => this.settings.copyMode });
     this.addSettingTab(new PseudonymizerSettingTab(this.app, this));
     this.statusBar = createPluginStatusBar({
       plugin: this,

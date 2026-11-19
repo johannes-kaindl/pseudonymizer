@@ -25,7 +25,10 @@ function load(fs: FakeFs = new FakeFs("_pseudonymizer"), secrets: Map<string, st
   };
   const Ctor = PseudonymizerPlugin as unknown as new (app: unknown, manifest: unknown) => PseudonymizerPlugin & { settingTabs: unknown[] };
   const plugin = new Ctor(app, { id: "pseudonymizer", name: "Pseudonymizer", version: "0.0.1" });
-  return { plugin, store, fs, secrets };
+  // Der vendorte Mock kennt `registerEditorExtension` nicht (nie von Hand editieren): der Test legt ihn selbst an und hält die Erweiterungen fest.
+  const editorExtensions: unknown[] = [];
+  (plugin as unknown as { registerEditorExtension(e: unknown): void }).registerEditorExtension = (e) => { editorExtensions.push(e); };
+  return { plugin, store, fs, secrets, editorExtensions };
 }
 const intervals: { cb: () => void; ms: number }[] = [];
 beforeEach(() => {
@@ -51,13 +54,14 @@ describe("PseudonymizerPlugin", () => {
     expect(plugin.api.status()).toEqual({ state: "ready" });
   });
   it("wires the reading view and a copy handler, refreshes the reading view on every change and lets go on unload", async () => {
-    const { plugin } = load();
+    const { plugin, editorExtensions } = load();
     const spy = plugin as unknown as { registerMarkdownPostProcessor(h: unknown): void; registerDomEvent(...a: unknown[]): void };
     const post = vi.spyOn(spy, "registerMarkdownPostProcessor");
     const dom = vi.spyOn(spy, "registerDomEvent");
     await plugin.onload();
     expect(post).toHaveBeenCalledTimes(1);
     expect(dom).toHaveBeenCalledWith(expect.anything(), "copy", expect.any(Function));
+    expect(editorExtensions).toHaveLength(1);
     const hook = vi.fn();
     plugin.reading.onRefresh(hook);
     plugin.emitChange();

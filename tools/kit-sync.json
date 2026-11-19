@@ -93,6 +93,7 @@
         "status-bar-item",
         "status-indicator",
         "text-swap",
+        "text-swap-editor",
         "write-ports"
       ],
       "rewrite": [

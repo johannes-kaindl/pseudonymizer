@@ -1,6 +1,6 @@
 /**
  * GUI-Smoke — fährt die Prüfpunkte aus docs/SMOKE.md gegen ein LAUFENDES Obsidian (CORE-TEST-02 b).
- * Stand: Aufgabe 12 Teil b. Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
+ * Stand: Aufgabe 17 (Live Preview, Punkte LP1 bis LP8, geschrieben, nicht gelaufen); davor Aufgabe 12 Teil b. Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
  * die Gerätedateien: Einrichten (Abbruch, Kontrollkästchen, Datei und Schlüssel), eine fremde Fassung im Ordner, den Reiter „Geräte und Schlüssel“,
  * die Sperre nach gelöschtem Schlüssel und die Code-Eingabe, dazu (Teil b) „Trotzdem einrichten“, Schlüssel ersetzen, Person vergessen (die Gerätedatei auf der Platte
  * wird mit dem Schlüssel im Treiber geöffnet und auf Klartext geprüft) und Gerät entfernen; seit Aufgabe 16 die Lesesicht (Einblenden, Umschalter, Sperren, Vergessen, Kopieren, Kopier-Befehle, Popout, Zug mit der Maus, PDF-Export). Live Preview folgt mit Aufgabe 17.
@@ -66,6 +66,14 @@ const PUNKTE = [
   "O Popout-Fenster: Umschalter und Kopieren wirken auch im eigenen document des Popouts",
   "Q Ziehen markierten Texts aus der Lesesicht (echter Mauszug, Input.setInterceptDrags): der Zug trägt in der Vorgabe den Platzhalter, nie den Klartext",
   "P PDF-Export (Speicherdialog im Renderer ersetzt): mit „Klartext zeigen“ trägt das PDF den Klartext und nicht den Platzhalter, ohne den Platzhalter und nicht den Klartext",
+  "LP1 Live Preview: Platzhalter mitten in der Zeile als Widget mit Klartext (gepunktete Linie, der Platzhalter im Tooltip und im Attribut), nicht lesbare gestrichelt, Unbekanntes bleibt Text, kein Attribut trägt Klartext",
+  "LP2 Cursor oder Auswahl auf dem Platzhalter zeigt den Platzhalter (die beiden anderen Stellen der Zeile bleiben Widgets); weg vom Platzhalter kommt das Widget zurück",
+  "LP3 Quelltextmodus zeigt die Platzhalter (kein Widget); zurück in Live Preview erscheinen die Widgets wieder, ohne die Notiz neu zu öffnen",
+  "LP4 Kopieren und Ausschneiden aus Live Preview (echtes copy- und cut-Ereignis am Editor, eigene Zwischenablage): Vorgabe liefert den Dateitext; „was ich sehe“ mit Klartext die eingeblendete Fassung, ausgeblendet oder bei Unbekanntem den Dateitext, Inline-Code und Zäune bleiben Platzhalter; Ausschneiden löscht die Auswahl wie ohne Plugin",
+  "LP5 Umschalter, Sperren, Entsperren und Cursor-Bewegung in der offenen Live Preview ohne Neuöffnen: aus zeigt die Platzhalter ohne Klartext im DOM, gesperrt alle Stellen nicht lesbar, entsperrt wieder Klartext; Datei und Editorinhalt bleiben byte-gleich (SHA-256)",
+  "LP6 Platzhalter in einem Zaun (flach und Tilde, auch hinter einer Leerzeile) und in Inline-Code bleibt Platzhalter: keine Zeile dort trägt ein Widget, die Berta-Stelle neben dem Inline-Code schon",
+  "LP7 Notiz mit 10 000 Zeilen und 500 Platzhaltern (Zäune mit weiteren darin): die Zeit je Tastendruck liegt gegen die gleich große Notiz ohne Platzhalter unter dem Kit-Schwellenwert (Aufschlag unter 8 ms, Median unter 50 ms); im DOM stehen nur die Widgets des sichtbaren Bereichs; Scrollen und Cursor lassen die Datei byte-gleich",
+  "LP8 Vergessen in der offenen Live Preview: die Stellen der vergessenen Person schalten ohne Neuöffnen auf „vergessen“ (Klasse, doppelte Linie, Tooltip, Text der Platzhalter), kein Klartext von ihr bleibt im DOM, die Stelle der anderen Person bleibt lesbar, Unbekanntes bleibt Text",
   "Z Person vergessen: Wahl, Warndialog mit Werten und Grenzen, danach nennt restore den Platzhalter in forgotten, Stand n+1, die Gerätedatei auf der Platte trägt keinen Klartext der Person",
   "J Vergessen in der offenen Lesesicht: die Stellen der vergessenen Person schalten ohne Neuöffnen auf „vergessen“ (Klasse, Tooltip, kein Klartext im DOM), die der anderen Person bleiben lesbar",
   "D Gerät entfernen: Knopf im Reiter, Warnung bei nicht lesbarer Fassung, danach ist die fremde Datei weg und die eigene bleibt",
@@ -522,6 +530,112 @@ function dateiHash(basePath: string, eigeneId: string): string | null {
   const pfad = join(basePath, ORDNER, `${eigeneId}.pseudo`);
   return existsSync(pfad) ? createHash("sha256").update(readFileSync(pfad)).digest("hex") : null;
 }
+
+// ---- Live Preview (Aufgabe 17): Notizen, die der Treiber selbst anlegt (Präfix `Smoke-`) und in Live Preview öffnet ----
+
+const NOTIZ_LP = "Smoke-LP.md";
+const NOTIZ_LP_GROSS = "Smoke-LP-gross.md";
+const NOTIZ_LP_LEER = "Smoke-LP-leer.md";
+const MAX_MAIL_5 = `${MAX}_Mail_5`;
+const LP_INHALT = [
+  "# Live Preview",
+  "",
+  `Hallo ${MAX}, Mail ${MAX}_Mail und Telefon ${MAX}_Telefon.`,
+  "",
+  `Noch nicht lesbar: ${MAX_MAIL_5}. Unbekannt: Person_a2b3c4d5e6.`,
+  "",
+  `Inline: \`${MAX}\` und Berta Person_${FREMD2_ID}.`,
+  "",
+  "```",
+  MAX,
+  "```",
+  "",
+  "~~~",
+  MAX,
+  "",
+  `${MAX}_Mail`,
+  "~~~",
+  "",
+].join("\n");
+/** Was die Zeile mit den drei Stellen in Live Preview zeigt, wenn alles eingeblendet ist. */
+const LP_ZEILE_GEZEIGT = "Hallo Max Mustermann, Mail max@example.org und Telefon 030 1234567.";
+const LP_ZEILE_DATEI = `Hallo ${MAX}, Mail ${MAX}_Mail und Telefon ${MAX}_Telefon.`;
+
+/** Die große Notiz (10 000 Zeilen, 500 Platzhalter im Text, dazu Zäune mit weiteren) und ihre Vergleichsnotiz gleicher Größe ohne Platzhalter. Erfundene Werte. */
+function grosseNotiz(mitPlatzhaltern: boolean): { text: string; stellen: number } {
+  const zeilen: string[] = [];
+  let stellen = 0;
+  for (let i = 0; zeilen.length < 10_000; i++) {
+    if (i % 500 === 100) { zeilen.push("```", mitPlatzhaltern ? `Code ${MAX}` : "Code ohne Besonderheit", "```"); continue; }
+    if (i % 20 === 0) {
+      zeilen.push(mitPlatzhaltern ? `Zeile ${String(i)} mit ${MAX}_Mail im Text` : `Zeile ${String(i)} mit Platzhalter-frei im Text`);
+      stellen += 1;
+    } else zeilen.push(`Zeile ${String(i)} ohne Besonderheit`);
+  }
+  return { text: `${zeilen.join("\n")}\n`, stellen };
+}
+const sha = (t: string): string => createHash("sha256").update(t).digest("hex");
+
+interface LpWidget { text: string; raw: string; title: string; shown: boolean; forgotten: boolean; unreadable: boolean; linie: string }
+interface LpStand { widgets: LpWidget[]; zeilen: { text: string; widgets: number }[]; klartextAttribut: number }
+/** Was der Editor einer vom Treiber geöffneten Notiz gerade zeigt: jedes Widget mit Zustand, Tooltip und berechneter Linie, jede Zeile mit der Zahl ihrer Widgets, dazu die Zahl der Attribute mit Klartext. */
+const LP_STAND = (pfad: string): string => `
+  const c = ${WURZEL(pfad)};
+  if (!c) return null;
+  const re = ${KLARTEXT_JS};
+  const ws = Array.from(c.querySelectorAll(".cm-content .okit-swap-inline"));
+  let attr = 0;
+  for (const e of Array.from(c.querySelectorAll(".cm-content *"))) for (const a of Array.from(e.attributes)) if (re.test(a.value)) attr += 1;
+  return {
+    widgets: ws.map((e) => ({ text: e.textContent, raw: e.getAttribute("data-okit-swap") || "", title: e.getAttribute("title") || "", shown: e.classList.contains("is-shown"),
+      forgotten: e.classList.contains("is-forgotten"), unreadable: e.classList.contains("is-unreadable"), linie: getComputedStyle(e).borderBottomStyle })),
+    zeilen: Array.from(c.querySelectorAll(".cm-content .cm-line")).map((l) => ({ text: l.textContent, widgets: l.querySelectorAll(".okit-swap-inline").length })),
+    klartextAttribut: attr,
+  };
+`;
+/** Ein echtes `copy`- oder `cut`-Ereignis mit eigener Zwischenablage am Inhalt des Editors (die des Systems bleibt unberührt); liefert den Text der Zwischenablage und den Dateitext danach. */
+const KOPIERE_EDITOR = (pfad: string, art: "copy" | "cut"): string => `
+  const leaf = ${BLATT(pfad)};
+  const dt = new DataTransfer();
+  const ev = new ClipboardEvent(${q(art)}, { clipboardData: dt, bubbles: true, cancelable: true });
+  leaf.view.editor.cm.contentDOM.dispatchEvent(ev);
+  return { text: dt.getData("text/plain"), abgefangen: ev.defaultPrevented, doc: leaf.view.editor.getValue() };
+`;
+/** Wählt die Zeilen `von` bis `bis` (0-basiert, ganze Zeilen) im Editor der Notiz. */
+const WAEHLE_ZEILEN = (pfad: string, von: number, bis: number): string => `
+  const leaf = ${BLATT(pfad)};
+  const ed = leaf.view.editor;
+  app.workspace.setActiveLeaf(leaf, { focus: true });
+  ed.setSelection({ line: ${String(von)}, ch: 0 }, { line: ${String(bis)}, ch: ed.getLine(${String(bis)}).length });
+  return ed.getSelection();
+`;
+/** Setzt den Cursor auf Zeile `zeile`, Spalte `spalte` (0-basiert). */
+const SETZE_CURSOR = (pfad: string, zeile: number, spalte: number): string => `
+  const leaf = ${BLATT(pfad)};
+  app.workspace.setActiveLeaf(leaf, { focus: true });
+  leaf.view.editor.setCursor({ line: ${String(zeile)}, ch: ${String(spalte)} });
+  return true;
+`;
+/** Tippt `n` Zeichen ans Ende einer Zeile mitten im großen Dokument und misst je Änderung die Zeit bis zum Ende des synchronen Aufrufs und bis zum nächsten Bild. */
+const MESSE_TIPPEN = (pfad: string, zeile: number, n: number): string => `
+  const leaf = ${BLATT(pfad)};
+  const cm = leaf.view.editor.cm;
+  app.workspace.setActiveLeaf(leaf, { focus: true });
+  leaf.view.editor.scrollIntoView({ from: { line: ${String(zeile)}, ch: 0 }, to: { line: ${String(zeile + 30)}, ch: 0 } }, true);
+  await new Promise((r) => setTimeout(r, 800));
+  const pos = cm.state.doc.line(${String(zeile + 1)}).to;
+  const sync = [], bild = [];
+  for (let i = 0; i < ${String(n)}; i++) {
+    const t0 = performance.now();
+    cm.dispatch({ changes: { from: pos + i, insert: "x" }, userEvent: "input.type" });
+    const t1 = performance.now();
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    sync.push(t1 - t0); bild.push(performance.now() - t0);
+  }
+  const med = (a) => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+  const p95 = (a) => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length * 0.95)]; };
+  return { sync: med(sync), syncP95: p95(sync), bild: med(bild), widgets: leaf.view.containerEl.querySelectorAll(".okit-swap-inline").length, zeilen: leaf.view.containerEl.querySelectorAll(".cm-line").length };
+`;
 
 function setup(): void {
   const vaultDir = stagingVaultDir(REPO_NAME);
@@ -1110,6 +1224,157 @@ async function main(): Promise<void> {
     await cdp.evaluate(`const l = ${BLATT(NOTIZ_KOPIEREN)}; if (l) l.detach(); return true;`);
     await clearNotices(cdp);
 
+    // --- LP (Aufgabe 17): Live Preview ---
+    // Geschrieben, noch nicht gelaufen (Rechner unter Last). Stand hier: bereit, Max und Berta bekannt, Klartext gezeigt, Vorgabe „Platzhalter“. Die Notizen legt der Treiber selbst an (Präfix `Smoke-`)
+    // und räumt sie weg; die Notiz `Smoke-LP.md` bleibt bis LP8 offen (Vergessen in der offenen Live Preview).
+    console.log("\nLP · Live Preview");
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LESEN)}, { focus: true }); return true;`).catch(() => undefined);
+    await cdp.evaluate(SCHALTER_ZURUECK);
+    await cdp.evaluate(LEGE_NOTIZ_AN(NOTIZ_LP, LP_INHALT));
+    const summeLpDatei = pruefsumme(info.basePath, NOTIZ_LP);
+    const lpOffen = await oeffneNotiz(cdp, NOTIZ_LP, "source", 0, false);
+    const lpBereit = (bedingung: string): string => `const s = (() => { ${LP_STAND(NOTIZ_LP)} })(); return s && (${bedingung}) ? s : null;`;
+    const lp1 = lpOffen ? await pollUntil<LpStand>(cdp, lpBereit("s.widgets.length >= 5"), 12_000, 250) : null;
+    const lpZeile1 = lp1?.zeilen.find((z) => z.text === LP_ZEILE_GEZEIGT);
+    const lpErste = lp1?.widgets[0];
+    const lpNichtLesbar = lp1?.widgets.filter((w) => w.unreadable) ?? [];
+    record("LP1 Live Preview: Platzhalter mitten in der Zeile als Widget mit Klartext (gepunktete Linie, der Platzhalter im Tooltip und im Attribut), nicht lesbare gestrichelt, Unbekanntes bleibt Text, kein Attribut trägt Klartext",
+      lp1 !== null && q(lp1.widgets.map((w) => w.text)) === q(["Max Mustermann", "max@example.org", "030 1234567", MAX_MAIL_5, "Berta Beispiel"])
+        && lpZeile1 !== undefined && lpZeile1.widgets === 3
+        && lpErste !== undefined && lpErste.raw === MAX && lpErste.title === MAX && lpErste.shown && lpErste.linie === "dotted"
+        && lpNichtLesbar.length === 1 && lpNichtLesbar[0]!.raw === MAX_MAIL_5 && /may not have synced/.test(lpNichtLesbar[0]!.title) && lpNichtLesbar[0]!.linie === "dashed"
+        && !lp1.widgets.some((w) => w.raw === "Person_a2b3c4d5e6") && lp1.klartextAttribut === 0,
+      `offen=${lpOffen}, Widgets=${q(lp1 ? lp1.widgets.map((w) => w.text) : null)}, Zeile mit drei Stellen=${q(lpZeile1 ?? null)}, erstes=${q(lpErste ? { raw: lpErste.raw, title: lpErste.title, linie: lpErste.linie } : null)}, nicht lesbar=${q(lpNichtLesbar.map((w) => ({ raw: w.raw, linie: w.linie })))}, Attribute mit Klartext=${lp1?.klartextAttribut ?? null}`);
+
+    // LP6: Zäune und Inline-Code
+    const lpFlach = lp1?.zeilen.filter((z) => z.text === MAX) ?? [];
+    const lpTilde = lp1?.zeilen.filter((z) => z.text === `${MAX}_Mail`) ?? [];
+    const lpInline = lp1?.zeilen.find((z) => z.text.startsWith("Inline:"));
+    record("LP6 Platzhalter in einem Zaun (flach und Tilde, auch hinter einer Leerzeile) und in Inline-Code bleibt Platzhalter: keine Zeile dort trägt ein Widget, die Berta-Stelle neben dem Inline-Code schon",
+      lp1 !== null && lpFlach.length >= 1 && lpFlach.every((z) => z.widgets === 0) && lpTilde.length === 1 && lpTilde[0]!.widgets === 0
+        && lpInline !== undefined && lpInline.widgets === 1 && lpInline.text.includes(MAX) && lpInline.text.includes("Berta Beispiel"),
+      `flache Zaunzeilen=${q(lpFlach)}, Tilde-Zeile=${q(lpTilde)}, Inline-Zeile=${q(lpInline ?? null)}`);
+
+    // LP2: Cursor und Auswahl auf dem Platzhalter
+    const lpPos = (zusatz: number): string => `const ed = ${BLATT(NOTIZ_LP)}.view.editor; const i = ed.getValue().indexOf(${q(MAX)}); return ed.offsetToPos(i + ${String(zusatz)});`;
+    const zeile2 = (s: LpStand): { text: string; widgets: number } | undefined => s.zeilen.find((z) => z.text.startsWith("Hallo "));
+    await cdp.evaluate(`const leaf = ${BLATT(NOTIZ_LP)}; app.workspace.setActiveLeaf(leaf, { focus: true }); const p = (() => { ${lpPos(4)} })(); leaf.view.editor.setCursor(p); return true;`);
+    const lp2Cursor = lpOffen ? await pollUntil<LpStand>(cdp, lpBereit(`s.zeilen.some((z) => z.text.startsWith("Hallo ") && z.widgets === 2 && z.text.includes(${q(MAX)}))`), 8000, 200) : null;
+    await cdp.evaluate(`const leaf = ${BLATT(NOTIZ_LP)}; const a = (() => { ${lpPos(0)} })(); const b = (() => { ${lpPos(MAX.length)} })(); leaf.view.editor.setSelection(a, b); return true;`);
+    const lp2Auswahl = lp2Cursor ? await pollUntil<LpStand>(cdp, lpBereit(`s.zeilen.some((z) => z.text.startsWith("Hallo ") && z.widgets === 2 && z.text.includes(${q(MAX)}))`), 8000, 200) : null;
+    await cdp.evaluate(SETZE_CURSOR(NOTIZ_LP, 0, 2));
+    const lp2Zurueck = lp2Auswahl ? await pollUntil<LpStand>(cdp, lpBereit(`s.zeilen.some((z) => z.text === ${q(LP_ZEILE_GEZEIGT)} && z.widgets === 3)`), 8000, 200) : null;
+    record("LP2 Cursor oder Auswahl auf dem Platzhalter zeigt den Platzhalter (die beiden anderen Stellen der Zeile bleiben Widgets); weg vom Platzhalter kommt das Widget zurück",
+      Boolean(lp2Cursor) && Boolean(lp2Auswahl) && Boolean(lp2Zurueck),
+      `Cursor im Platzhalter=${q(lp2Cursor ? zeile2(lp2Cursor) : null)}, Auswahl=${q(lp2Auswahl ? zeile2(lp2Auswahl) : null)}, Cursor weg=${q(lp2Zurueck ? zeile2(lp2Zurueck) : null)}`);
+
+    // LP3: Quelltextmodus und zurück (derselbe Befehl wie am Schalter von Obsidian)
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LP)}, { focus: true }); app.commands.executeCommandById("editor:toggle-source"); return true;`);
+    const lp3Quelltext = await pollUntil<LpStand>(cdp, lpBereit(`s.widgets.length === 0 && s.zeilen.some((z) => z.text === ${q(LP_ZEILE_DATEI)})`), 8000, 200);
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LP)}, { focus: true }); app.commands.executeCommandById("editor:toggle-source"); return true;`);
+    const lp3Zurueck = lp3Quelltext ? await pollUntil<LpStand>(cdp, lpBereit("s.widgets.length >= 5"), 8000, 200) : null;
+    record("LP3 Quelltextmodus zeigt die Platzhalter (kein Widget); zurück in Live Preview erscheinen die Widgets wieder, ohne die Notiz neu zu öffnen",
+      Boolean(lp3Quelltext) && Boolean(lp3Zurueck),
+      `Quelltext: Widgets=${lp3Quelltext?.widgets.length ?? null}, Zeile=${q(lp3Quelltext?.zeilen.find((z) => z.text.startsWith("Hallo "))?.text ?? null)}; zurück: Widgets=${lp3Zurueck?.widgets.length ?? null}`);
+
+    // LP4: Kopieren und Ausschneiden
+    const zeileHallo = 2;
+    const KOPIE = async (art: "copy" | "cut" = "copy"): Promise<{ text: string; abgefangen: boolean; doc: string }> => cdp.evaluate(KOPIERE_EDITOR(NOTIZ_LP, art));
+    await cdp.evaluate(WAEHLE_ZEILEN(NOTIZ_LP, zeileHallo, zeileHallo));
+    const kopVorgabe = await KOPIE();
+    await cdp.evaluate(`const p = ${P}; if (!p) return false; p.settings.copyMode = "as-shown"; p.emitChange(); return true;`);
+    const kopGesehen = await KOPIE();
+    await cdp.evaluate(`const p = ${P}; if (!p) return false; p.device.setShowPlaintext(false); p.emitChange(); return true;`);
+    const kopAus = await KOPIE();
+    await cdp.evaluate(`const p = ${P}; if (!p) return false; p.device.setShowPlaintext(true); p.emitChange(); return true;`);
+    await cdp.evaluate(WAEHLE_ZEILEN(NOTIZ_LP, 4, 4));
+    const kopUnbekannt = await KOPIE();
+    const auswahlCode = await cdp.evaluate<string>(WAEHLE_ZEILEN(NOTIZ_LP, 6, 16));
+    const kopCode = await KOPIE();
+    await cdp.evaluate(WAEHLE_ZEILEN(NOTIZ_LP, zeileHallo, zeileHallo));
+    const vorCut = (await KOPIE()).doc;
+    const kopCut = await KOPIE("cut");
+    await cdp.evaluate(SCHALTER_ZURUECK);
+    const dateiZeile = LP_ZEILE_DATEI;
+    // Der Code-Bereich: das Widget-Ersatzpaar der Berta-Stelle ist das einzige, was in der Zwischenablage Klartext trägt; Inline-Code und Zäune bleiben, wie die Datei sie hält.
+    const erwartetCode = auswahlCode.replace(`Person_${FREMD2_ID}`, "Berta Beispiel");
+    record("LP4 Kopieren und Ausschneiden aus Live Preview (echtes copy- und cut-Ereignis am Editor, eigene Zwischenablage): Vorgabe liefert den Dateitext; „was ich sehe“ mit Klartext die eingeblendete Fassung, ausgeblendet oder bei Unbekanntem den Dateitext, Inline-Code und Zäune bleiben Platzhalter; Ausschneiden löscht die Auswahl wie ohne Plugin",
+      kopVorgabe.text === dateiZeile && !KLARTEXT.test(kopVorgabe.text)
+        && kopGesehen.abgefangen && kopGesehen.text === LP_ZEILE_GEZEIGT
+        && kopAus.text === dateiZeile
+        && !KLARTEXT.test(kopUnbekannt.text) && kopUnbekannt.text.includes("Person_a2b3c4d5e6")
+        && kopCode.text === erwartetCode && kopCode.text.includes(`\`${MAX}\``) && kopCode.text.includes(`~~~\n${MAX}\n\n${MAX}_Mail\n~~~`)
+        && kopCut.text === LP_ZEILE_GEZEIGT && kopCut.doc === vorCut.replace(dateiZeile, ""),
+      `Vorgabe=${q(kopVorgabe.text)}, „was ich sehe“=${q(kopGesehen.text)}, ausgeblendet=${q(kopAus.text)}, Unbekanntes=${q(kopUnbekannt.text)}, Code-Bereich gleich der Erwartung=${kopCode.text === erwartetCode}, Ausschneiden: Zwischenablage=${q(kopCut.text)}, Datei danach ohne die Zeile=${kopCut.doc === vorCut.replace(dateiZeile, "")}`);
+    // Die Ausschneidprobe hat die Zeile gelöscht: Notiz neu anlegen, damit LP5 bis LP8 den vollen Inhalt sehen.
+    await cdp.evaluate(`const l = ${BLATT(NOTIZ_LP)}; if (l) l.detach(); return true;`);
+    await cdp.evaluate(LEGE_NOTIZ_AN(NOTIZ_LP, LP_INHALT));
+    const lpNeu = await oeffneNotiz(cdp, NOTIZ_LP, "source", 0, false);
+    const lp5Start = lpNeu ? await pollUntil<LpStand>(cdp, lpBereit("s.widgets.length >= 5"), 12_000, 250) : null;
+    const summeLpVor = pruefsumme(info.basePath, NOTIZ_LP);
+
+    // LP5: Umschalter, Sperren, Entsperren, Cursor in der offenen Live Preview; die Datei bleibt, wie sie war
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LP)}, { focus: true }); app.commands.executeCommandById(${q(`${PLUGIN_ID}:toggle-plaintext`)}); return true;`);
+    const lp5Aus = lp5Start ? await pollUntil<LpStand>(cdp, lpBereit(`s.widgets.length >= 5 && s.widgets.filter((w) => w.raw !== ${q(MAX_MAIL_5)}).every((w) => w.text === w.raw && !w.shown) && !${KLARTEXT_JS}.test(s.zeilen.map((z) => z.text).join("\\n"))`), 8000, 200) : null;
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:toggle-plaintext`)}); return true;`);
+    const lp5An = lp5Aus ? await pollUntil<LpStand>(cdp, lpBereit("s.widgets.filter((w) => w.shown).length >= 4"), 8000, 200) : null;
+    for (const [zeile, spalte] of [[2, 3], [4, 10], [6, 4], [0, 0]]) await cdp.evaluate(SETZE_CURSOR(NOTIZ_LP, zeile!, spalte!));
+    await cdp.evaluate(`const p = ${P}; if (!p) return false; p.keys.clear(); await p.refreshTables(); return true;`);
+    const lp5Gesperrt = lp5An ? await pollUntil<LpStand>(cdp, lpBereit(`s.widgets.length >= 5 && s.widgets.every((w) => w.unreadable && w.text === w.raw) && !${KLARTEXT_JS}.test(s.zeilen.map((z) => z.text).join("\\n"))`), 12_000, 250) : null;
+    await cdp.evaluate(`
+      const p = ${P}; if (!p) return false;
+      const k = ${q(schluesselW)};
+      if (!k) return false;
+      p.keys.write({ chainId: Uint8Array.from(k.chainId), stand: k.stand, key: Uint8Array.from(k.key) });
+      await p.refreshTables();
+      return true;
+    `);
+    const lp5Entsperrt = lp5Gesperrt ? await pollUntil<LpStand>(cdp, lpBereit("s.widgets.filter((w) => w.shown).length >= 4"), 12_000, 250) : null;
+    const summeLpNach = pruefsumme(info.basePath, NOTIZ_LP);
+    const lpEditorWert = await cdp.evaluate<string>(`const l = ${BLATT(NOTIZ_LP)}; return l ? l.view.editor.getValue() : "";`);
+    record("LP5 Umschalter, Sperren, Entsperren und Cursor-Bewegung in der offenen Live Preview ohne Neuöffnen: aus zeigt die Platzhalter ohne Klartext im DOM, gesperrt alle Stellen nicht lesbar, entsperrt wieder Klartext; Datei und Editorinhalt bleiben byte-gleich (SHA-256)",
+      Boolean(lp5Start) && Boolean(lp5Aus) && Boolean(lp5An) && Boolean(lp5Gesperrt) && Boolean(lp5Entsperrt) && schluesselW !== null
+        && summeLpVor !== null && summeLpVor === summeLpNach && sha(lpEditorWert) === sha(LP_INHALT) && summeLpDatei === summeLpNach,
+      `aus=${Boolean(lp5Aus)}, an=${Boolean(lp5An)}, gesperrt=${Boolean(lp5Gesperrt)}, entsperrt=${Boolean(lp5Entsperrt)}, Prüfsumme vorher=${summeLpVor?.slice(0, 12) ?? null} nachher=${summeLpNach?.slice(0, 12) ?? null}, Editorinhalt gleich Vorlage=${sha(lpEditorWert) === sha(LP_INHALT)}`);
+
+    // LP7: Laufzeit in der großen Notiz, gegen die Vergleichsnotiz ohne Platzhalter und den Messwert des Bausteins
+    const mit = grosseNotiz(true);
+    const ohne = grosseNotiz(false);
+    await cdp.evaluate(LEGE_NOTIZ_AN(NOTIZ_LP_GROSS, mit.text));
+    await cdp.evaluate(LEGE_NOTIZ_AN(NOTIZ_LP_LEER, ohne.text));
+    const summeGrossVor = pruefsumme(info.basePath, NOTIZ_LP_GROSS);
+    type Tippen = { sync: number; syncP95: number; bild: number; widgets: number; zeilen: number };
+    const grossOffen = await oeffneNotiz(cdp, NOTIZ_LP_GROSS, "source", 0, false);
+    const grossBereit = grossOffen ? await pollUntil<number>(cdp, `const c = ${WURZEL(NOTIZ_LP_GROSS)}; return c && c.querySelectorAll(".cm-line").length > 5 ? 1 : null;`, 15_000, 300) : null;
+    // Scrollen und Cursor: die Datei bleibt byte-gleich
+    await cdp.evaluate(`
+      const ed = ${BLATT(NOTIZ_LP_GROSS)}.view.editor;
+      for (const z of [0, 2500, 5000, 9990, 4000]) { ed.scrollIntoView({ from: { line: z, ch: 0 }, to: { line: z + 20, ch: 0 } }, true); await new Promise((r) => setTimeout(r, 300)); ed.setCursor({ line: z, ch: 0 }); }
+      return true;
+    `);
+    const summeGrossScroll = pruefsumme(info.basePath, NOTIZ_LP_GROSS);
+    const tippenMit = grossBereit ? await cdp.evaluate<Tippen>(MESSE_TIPPEN(NOTIZ_LP_GROSS, 4000, 60)) : null;
+    const leerOffen = await oeffneNotiz(cdp, NOTIZ_LP_LEER, "source", 0, false);
+    const leerBereit = leerOffen ? await pollUntil<number>(cdp, `const c = ${WURZEL(NOTIZ_LP_LEER)}; return c && c.querySelectorAll(".cm-line").length > 5 ? 1 : null;`, 15_000, 300) : null;
+    const tippenOhne = leerBereit ? await cdp.evaluate<Tippen>(MESSE_TIPPEN(NOTIZ_LP_LEER, 4000, 60)) : null;
+    const aufschlag = tippenMit && tippenOhne ? tippenMit.sync - tippenOhne.sync : null;
+    // Schwelle des Bausteins (obsidian-kit 0.104.0, gemessen in Obsidian 1.15.1: Aufschlag 0,3 ms, Median 3,2 ms synchron): Aufschlag unter 8 ms, Median unter 50 ms. Die Zaunliste je Dokumentstand ist der Teil, den das Plugin dazu legt.
+    record("LP7 Notiz mit 10 000 Zeilen und 500 Platzhaltern (Zäune mit weiteren darin): die Zeit je Tastendruck liegt gegen die gleich große Notiz ohne Platzhalter unter dem Kit-Schwellenwert (Aufschlag unter 8 ms, Median unter 50 ms); im DOM stehen nur die Widgets des sichtbaren Bereichs; Scrollen und Cursor lassen die Datei byte-gleich",
+      tippenMit !== null && tippenOhne !== null && aufschlag !== null && aufschlag < 8 && tippenMit.sync < 50 && tippenMit.widgets > 0 && tippenMit.widgets < 100
+        && summeGrossVor !== null && summeGrossVor === summeGrossScroll && sha(mit.text) === summeGrossVor,
+      `Stellen in der Notiz=${mit.stellen}, mit Platzhaltern: Median synchron ${tippenMit?.sync.toFixed(1) ?? "?"} ms (p95 ${tippenMit?.syncP95.toFixed(1) ?? "?"}), bis zum Bild ${tippenMit?.bild.toFixed(1) ?? "?"} ms, Widgets im DOM ${tippenMit?.widgets ?? "?"} von ${tippenMit?.zeilen ?? "?"} Zeilen; ohne: Median ${tippenOhne?.sync.toFixed(1) ?? "?"} ms, bis zum Bild ${tippenOhne?.bild.toFixed(1) ?? "?"} ms; Aufschlag ${aufschlag?.toFixed(1) ?? "?"} ms (Kit gemessen: 0,3 ms, Median 3,2 ms); Prüfsumme nach Scrollen gleich=${summeGrossVor !== null && summeGrossVor === summeGrossScroll}`);
+    await cdp.evaluate(`
+      for (const n of [${q(NOTIZ_LP_GROSS)}, ${q(NOTIZ_LP_LEER)}]) {
+        const l = app.workspace.getLeavesOfType("markdown").find((x) => x.view.containerEl.getAttribute("data-pseu-smoke") === n);
+        if (l) l.detach();
+        const f = app.vault.getAbstractFileByPath(n);
+        if (f) await app.vault.delete(f);
+      }
+      return true;
+    `);
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LP)}, { focus: true }); return true;`);
+    await clearNotices(cdp);
+
     // --- Z ---
     console.log("\nZ · Person vergessen");
     const vorZ = await leseSchluessel(cdp);
@@ -1174,6 +1439,25 @@ async function main(): Promise<void> {
       `Stellen der vergessenen Person=${maxStellen.length} (alle vergessen=${maxStellen.every((x) => x.forgotten)}), Klartext von Max im DOM=${nachVergessen ? KLARTEXT_MAX.test(nachVergessen.html) : null}, Berta=${q(bertaStelle.map((x) => x.text))}`);
     await cdp.evaluate(`const l = ${BLATT(NOTIZ_LESEN)}; if (l) l.detach(); return true;`);
     await cdp.send("Network.disable");
+
+    // --- LP8: Vergessen in der offenen Live Preview ---
+    console.log("\nLP8 · Vergessen in der offenen Live Preview");
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LP)}, { focus: true }); return true;`);
+    const lp8 = await pollUntil<LpStand>(cdp, `
+      const s = (() => { ${LP_STAND(NOTIZ_LP)} })();
+      if (!s) return null;
+      const max = s.widgets.filter((w) => w.raw.toLowerCase().startsWith(${q(MAX.toLowerCase())}));
+      return max.length >= 4 && max.every((w) => w.forgotten) ? s : null;
+    `, 20_000, 300);
+    const lp8Max = lp8 ? lp8.widgets.filter((w) => w.raw.toLowerCase().startsWith(MAX.toLowerCase())) : [];
+    const lp8Berta = lp8 ? lp8.widgets.filter((w) => w.raw === `Person_${FREMD2_ID}`) : [];
+    record("LP8 Vergessen in der offenen Live Preview: die Stellen der vergessenen Person schalten ohne Neuöffnen auf „vergessen“ (Klasse, doppelte Linie, Tooltip, Text der Platzhalter), kein Klartext von ihr bleibt im DOM, die Stelle der anderen Person bleibt lesbar, Unbekanntes bleibt Text",
+      Boolean(lp8) && lp8Max.length >= 4 && lp8Max.every((w) => w.text === w.raw && /forgotten/.test(w.title) && w.linie === "double")
+        && !KLARTEXT_MAX.test(lp8!.zeilen.map((z) => z.text).join("\n")) && lp8!.klartextAttribut === 0
+        && lp8Berta.length === 1 && lp8Berta[0]!.shown && lp8Berta[0]!.text === "Berta Beispiel"
+        && !lp8!.widgets.some((w) => w.raw === "Person_a2b3c4d5e6"),
+      `Stellen der vergessenen Person=${lp8Max.length} (alle vergessen=${lp8Max.every((w) => w.forgotten)}), Berta=${q(lp8Berta.map((w) => w.text))}, Klartext von Max im Editor=${lp8 ? KLARTEXT_MAX.test(lp8.zeilen.map((z) => z.text).join("\n")) : null}`);
+    await cdp.evaluate(`const l = ${BLATT(NOTIZ_LP)}; if (l) l.detach(); return true;`);
 
     // --- B ---
     console.log("\nB · Prüffenster");
