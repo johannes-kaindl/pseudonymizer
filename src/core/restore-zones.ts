@@ -3,9 +3,11 @@
 // Markdown-Editor mit Vorschau von selbst abruft (ein Agent mit Schreibzugriff legt eine solche Adresse in die Notiz). EINE Stelle für beide Kopierwege: der Befehl „Mit Klartext kopieren“ (`copy.ts`, über die Plugin-API)
 // und das Kopieren in Live Preview mit „was ich sehe“ (`live-preview.ts`, über den Auflöser der Anzeige). Rein, ohne `obsidian`-Import.
 //
-// Freigegeben sind das Ziel von `mailto:` (Spec 8.4, wie in `transform.ts`) und der Frontmatter-Block: `transform` zerlegt ihn in Eigenschaftswerte, die es als Zeile ersetzt; hier steht er im Text, also gilt er als Text
-// (Inhalt eines Werts, der selbst eine Adresse oder ein Code-Stück ist, schützt die Erkennung weiter).
+// Freigegeben ist das Ziel von `mailto:` (Spec 8.4, wie in `transform.ts`). Der Frontmatter-Block ist NICHT als Ganzes frei (Runde 2, N2): `transform` ersetzt dort je Eigenschaftswert als `line`, und ein Wert, der eine Adresse
+// (`cover: https://…`), ein Wikilink (`up: "[[…]]"`) oder ein Code-Stück ist, bleibt geschützt. Darum wird jeder Wert des Blocks einzeln mit `listReplaceableSpans` geprüft und auf seine Stelle im Block abgebildet; Schlüssel,
+// Aufzählungszeichen, Fortsetzungs- und Kommentarzeilen sind geschützt (eine Zeile, die der Leser nicht ganz versteht, wird nie zurückgesetzt).
 import { findPlaceholders } from "../vendor/kit/placeholder";
+import { locateFrontmatter } from "../vendor/kit/frontmatter";
 import { listReplaceableSpans, type TextRange } from "../vendor/kit/replaceable-spans";
 import type { ApiError, RestoreResult } from "../vendor/kit/pseudonymizer-source";
 
@@ -17,9 +19,31 @@ export interface RestoreZones {
   inside(start: number, end: number): boolean;
 }
 
+const KEY_LINE = /^([A-Za-z0-9_][\w .-]*?):[ \t]*(.*)$/;
+const ITEM_LINE = /^[ \t]*-[ \t]+(.*)$/;
+
+/** Die Bereiche der Werte im Frontmatter-Block (Offsets im ganzen Text), je Wert wie `transform` ihn als `line` ersetzen würde. */
+function frontmatterValueSpans(text: string): TextRange[] {
+  const fm = locateFrontmatter(text);
+  if (fm === null || fm.empty) return [];
+  const out: TextRange[] = [];
+  let lineStart = fm.open.length;
+  for (const line of fm.raw.split("\n")) {
+    const content = line.endsWith("\r") ? line.slice(0, -1) : line;
+    const m = KEY_LINE.exec(content) ?? ITEM_LINE.exec(content);
+    if (m !== null) {
+      const value = m[m.length - 1] ?? "";
+      const from = lineStart + content.length - value.length;
+      for (const r of listReplaceableSpans(value, { allow: ["mailto-target"] })) out.push({ start: from + r.start, end: from + r.end });
+    }
+    lineStart += line.length + 1;
+  }
+  return out;
+}
+
 /** Die Bereiche für `text`. Ein Text ohne Schutzstellen ist ein Bereich. */
 export function restoreZones(text: string): RestoreZones {
-  const spans = listReplaceableSpans(text, { allow: ["mailto-target", "frontmatter"] });
+  const spans = [...listReplaceableSpans(text, { allow: ["mailto-target"] }), ...frontmatterValueSpans(text)].sort((x, y) => x.start - y.start);
   return {
     spans,
     inside(start, end) {

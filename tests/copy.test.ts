@@ -266,6 +266,32 @@ describe("Befehle „Mit Klartext kopieren“ und „Mit Platzhaltern kopieren�
     expect(lastNotice()).not.toMatch(/Mustermann|max@example/);
   });
 
+  it("Frontmatter: Adresse, Wikilink und Code behalten den Platzhalter, die übrigen Werte werden aufgelöst (N2)", async () => {
+    const text = [
+      "---",
+      `cover: https://example.org/${NAME}.png`,
+      `up: "[[${NAME}]]"`,
+      `code: \`${NAME}\``,
+      `title: ${NAME}`,
+      `from: ${NAME} <${MAIL}>`,
+      "---",
+      `Text ${NAME}`,
+    ].join("\n");
+    const { u, written } = ui(text);
+    await copyCommand(hostFor(memoryWith()), "plaintext", u);
+    expect(written[0]?.text).toBe([
+      "---",
+      `cover: https://example.org/${NAME}.png`,
+      `up: "[[${NAME}]]"`,
+      `code: \`${NAME}\``,
+      `title: Max Mustermann`,
+      `from: Max Mustermann <max@example.org>`,
+      "---",
+      `Text Max Mustermann`,
+    ].join("\n"));
+    expect(lastNotice()).toBe("3 placeholder(s) in addresses or code stayed as placeholders.");
+  });
+
   it("gesperrt oder nicht eingerichtet: nichts wird kopiert, die Notice nennt den Grund", async () => {
     const locked = memoryWith();
     locked.lock("table-missing");

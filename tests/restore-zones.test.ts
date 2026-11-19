@@ -63,6 +63,45 @@ describe("restoreInZones", () => {
     expect(r.text).toBe(`---\nfrom: ${CLEAR}\n---\nText`);
   });
 
+  it("Frontmatter je Wert: Adresse, Wikilink und Code behalten den Platzhalter, `title` und `from` werden aufgelöst (N2)", () => {
+    const text = [
+      "---",
+      `cover: https://example.org/${NAME}.png`,
+      `up: "[[${NAME}]]"`,
+      `code: \`${NAME}\``,
+      `title: ${NAME}`,
+      `from: ${NAME} <${MAIL}>`,
+      "---",
+      `Text ${NAME}`,
+    ].join("\n");
+    const r = restorer()(text);
+    if ("error" in r) throw new Error("unerwartet");
+    expect(r.text).toBe([
+      "---",
+      `cover: https://example.org/${NAME}.png`,
+      `up: "[[${NAME}]]"`,
+      `code: \`${NAME}\``,
+      `title: ${CLEAR}`,
+      `from: ${CLEAR} <max@example.org>`,
+      "---",
+      `Text ${CLEAR}`,
+    ].join("\n"));
+    expect(r.kept).toBe(3);
+  });
+
+  it("Frontmatter: Schlüsselzeilen, Aufzählungen, Fortsetzungen und CRLF; ein Platzhalter im Schlüssel oder in einer Fortsetzungszeile bleibt", () => {
+    const text = `---\r\ntags:\r\n  - ${NAME}\r\n  - https://example.org/${NAME}\r\nlist: [${NAME}, b]\r\nlang: x\r\n  weiter ${NAME}\r\n---\r\n${NAME}`;
+    const r = restorer()(text);
+    if ("error" in r) throw new Error("unerwartet");
+    expect(r.text).toBe(`---\r\ntags:\r\n  - ${CLEAR}\r\n  - https://example.org/${NAME}\r\nlist: [${CLEAR}, b]\r\nlang: x\r\n  weiter ${NAME}\r\n---\r\n${CLEAR}`);
+  });
+
+  it("ein Platzhalter nach einem BOM (kein Block) oder in einem Text, der wie ein Block aussieht, gilt als Text", () => {
+    const r = restorer()(`\ufeff---\ncover: https://example.org/${NAME}\n---\n${NAME}`);
+    if ("error" in r) throw new Error("unerwartet");
+    expect(r.text).toBe(`\ufeff---\ncover: https://example.org/${NAME}\n---\n${CLEAR}`);
+  });
+
   it("ein Fehler der Plugin-API kommt unverändert zurück", () => {
     const r = restoreInZones(`Hallo ${NAME}`, () => ({ error: "locked", message: "x" }));
     expect(r).toEqual({ error: "locked", message: "x" });

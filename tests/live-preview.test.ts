@@ -332,6 +332,33 @@ describe("Kopieren aus Live Preview", () => {
     expect(c.set["text/plain"]).toBe(doc.replace(`Text ${NAME}`, `Text ${CLEAR}`).replace(`mailto:${MAIL}`, "mailto:max@example.org"));
   });
 
+  it("Frontmatter je Wert: Adresse, Wikilink und Code bleiben Platzhalter, die übrigen Werte werden Klartext (N2)", () => {
+    const r = rig();
+    r.mode.copy = "as-shown";
+    const c = clip();
+    const doc = [
+      "---",
+      `cover: https://example.org/${NAME}.png`,
+      `up: "[[${NAME}]]"`,
+      `code: \`${NAME}\``,
+      `title: ${NAME}`,
+      `from: ${NAME} <${MAIL}>`,
+      "---",
+      `Text ${NAME}`,
+    ].join("\n");
+    editorCopyHandler(r.deps)(c.ev, copyView(doc));
+    expect(c.set["text/plain"]).toBe([
+      "---",
+      `cover: https://example.org/${NAME}.png`,
+      `up: "[[${NAME}]]"`,
+      `code: \`${NAME}\``,
+      `title: ${CLEAR}`,
+      `from: ${CLEAR} <max@example.org>`,
+      "---",
+      `Text ${CLEAR}`,
+    ].join("\n"));
+  });
+
   it("ein Code-Stück, das vor der Auswahl beginnt, schützt die Auswahl (Bereich über das ganze Dokument, W1)", () => {
     const r = rig();
     r.mode.copy = "as-shown";
