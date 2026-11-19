@@ -186,3 +186,283 @@ textarea.okit-prompt-field { resize: vertical; min-height: calc(var(--size-4-12)
 .okit-swap.is-unreadable { border-bottom: 1px dashed currentcolor; opacity: 0.7; }
 .okit-swap.is-forgotten { border-bottom: 3px double currentcolor; opacity: 0.7; }
 .okit-swap-measure { position: fixed; left: -99999px; top: 0; width: 1px; overflow: hidden; }
+
+/* Kit: review-list (obsidian-kit 0.106.0) */
+.okit-review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+
+.okit-review[aria-busy="true"] {
+  cursor: progress;
+}
+
+.okit-review-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-4-2);
+}
+
+.okit-review-count {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.okit-review-bulk,
+.okit-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-2-3);
+}
+
+.okit-review-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+}
+
+.okit-review-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2);
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+
+.okit-review-card.is-resolved {
+  color: var(--text-faint);
+}
+
+.okit-review-card.is-accepted {
+  border-color: var(--interactive-accent);
+}
+
+.okit-review-card.is-rejected {
+  color: var(--text-muted);
+  border-style: dashed;
+}
+
+.okit-review-decided {
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  color: var(--text-muted);
+}
+
+.okit-review-card.is-accepted .okit-review-decided {
+  color: var(--text-accent);
+}
+
+.okit-review-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-3);
+  cursor: pointer;
+  border-radius: var(--radius-s);
+}
+
+.okit-review-main:focus-visible {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
+.okit-review-meta {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.okit-review-stale {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-warning);
+}
+
+.okit-review-anchor {
+  padding-inline-start: var(--size-4-2);
+  border-inline-start: 2px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+
+.okit-review-orphan {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+.okit-review-thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+}
+
+.okit-review-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--font-ui-small);
+}
+
+.okit-review-summary {
+  font-size: var(--font-ui-small);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.okit-review-actions button {
+  flex: 1 1 auto;
+  min-height: var(--input-height);
+}
+
+.okit-review-empty {
+  padding: var(--size-4-4);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.okit-review-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-3);
+}
+
+.okit-review-found {
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  overflow-wrap: anywhere;
+}
+
+.okit-review-context {
+  padding-inline-start: var(--size-4-2);
+  border-inline-start: 2px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+
+.okit-review-hit {
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  border-bottom: 1px solid currentcolor;
+}
+
+.okit-review-more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-3);
+}
+
+.okit-review-toggle {
+  align-self: flex-start;
+  min-height: calc(var(--size-4-10) + var(--size-4-1));
+}
+
+.okit-review-ways .okit-segmented {
+  display: flex;
+  width: 100%;
+}
+
+.okit-review-ways .okit-segmented-btn {
+  flex: 1 1 auto;
+  min-height: calc(var(--size-4-10) + var(--size-4-1));
+}
+
+.okit-review-owner-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--size-4-2);
+}
+
+.okit-review-owner-select {
+  flex: 1 1 auto;
+  min-height: calc(var(--size-4-10) + var(--size-4-1));
+  min-width: 0;
+}
+
+.okit-review-also {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.okit-review-card[data-author="0"] { border-inline-start: 3px solid var(--color-blue); }
+.okit-review-card[data-author="1"] { border-inline-start: 3px solid var(--color-orange); }
+.okit-review-card[data-author="2"] { border-inline-start: 3px solid var(--color-purple); }
+.okit-review-card[data-author="3"] { border-inline-start: 3px solid var(--color-cyan); }
+.okit-review-card[data-author="4"] { border-inline-start: 3px solid var(--color-yellow); }
+.okit-review-card[data-author="5"] { border-inline-start: 3px solid var(--color-pink); }
+
+/* Kit: redline (obsidian-kit 0.106.0) */
+.okit-redline {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: var(--line-height-normal);
+}
+
+.okit-redline-del {
+  text-decoration: line-through;
+  color: var(--color-orange);
+}
+
+.okit-redline-ins {
+  text-decoration: underline;
+  color: var(--color-blue);
+}
+
+/* Kontrast 4,5 zu 1: die rohen Akzentfarben der Themes unterschreiten ihn (Orange hell, Blau dunkel, beide in Kuro hell); gegen den Text gemischt halten sie ihn in Standard, Field Report und Kuro, auf dem Grund des Editors und auf dem der Seitenleiste (dunkel Standard: Einfügung 75 Prozent, gemessen 2026-11-12 mit 4,41 bei 80). */
+.theme-light .okit-redline-del { color: color-mix(in srgb, var(--color-orange) 60%, var(--text-normal)); }
+.theme-light .okit-redline-ins { color: color-mix(in srgb, var(--color-blue) 60%, var(--text-normal)); }
+.theme-dark .okit-redline-del { color: color-mix(in srgb, var(--color-orange) 80%, var(--text-normal)); }
+.theme-dark .okit-redline-ins { color: color-mix(in srgb, var(--color-blue) 75%, var(--text-normal)); }
+
+.okit-redline-del[data-author="0"],
+.okit-redline-ins[data-author="0"] { color: var(--color-blue); }
+.okit-redline-del[data-author="1"],
+.okit-redline-ins[data-author="1"] { color: var(--color-orange); }
+.okit-redline-del[data-author="2"],
+.okit-redline-ins[data-author="2"] { color: var(--color-purple); }
+.okit-redline-del[data-author="3"],
+.okit-redline-ins[data-author="3"] { color: var(--color-cyan); }
+.okit-redline-del[data-author="4"],
+.okit-redline-ins[data-author="4"] { color: var(--color-yellow); }
+.okit-redline-del[data-author="5"],
+.okit-redline-ins[data-author="5"] { color: var(--color-pink); }
+
+/* Autorenplätze gegen den Text gemischt, je Modus (Spezifität größer als die Moduszeilen oben, die Reihenfolge ist egal). Hell brauchen alle sechs Plätze den Anteil, dunkel nur Blau und Pink.
+   Je größer der Anteil Text, desto näher rücken die Plätze zusammen: Kontrast und Unterscheidbarkeit gehen hier gegeneinander, die gemessenen Abstände stehen im CHANGELOG. */
+.theme-light .okit-redline-del[data-author="0"], .theme-light .okit-redline-ins[data-author="0"] { color: color-mix(in srgb, var(--color-blue) 60%, var(--text-normal)); }
+.theme-light .okit-redline-del[data-author="1"], .theme-light .okit-redline-ins[data-author="1"] { color: color-mix(in srgb, var(--color-orange) 60%, var(--text-normal)); }
+.theme-light .okit-redline-del[data-author="2"], .theme-light .okit-redline-ins[data-author="2"] { color: color-mix(in srgb, var(--color-purple) 60%, var(--text-normal)); }
+.theme-light .okit-redline-del[data-author="3"], .theme-light .okit-redline-ins[data-author="3"] { color: color-mix(in srgb, var(--color-cyan) 45%, var(--text-normal)); }
+.theme-light .okit-redline-del[data-author="4"], .theme-light .okit-redline-ins[data-author="4"] { color: color-mix(in srgb, var(--color-yellow) 40%, var(--text-normal)); }
+.theme-light .okit-redline-del[data-author="5"], .theme-light .okit-redline-ins[data-author="5"] { color: color-mix(in srgb, var(--color-pink) 50%, var(--text-normal)); }
+.theme-dark .okit-redline-del[data-author="0"], .theme-dark .okit-redline-ins[data-author="0"] { color: color-mix(in srgb, var(--color-blue) 75%, var(--text-normal)); }
+.theme-dark .okit-redline-del[data-author="5"], .theme-dark .okit-redline-ins[data-author="5"] { color: color-mix(in srgb, var(--color-pink) 90%, var(--text-normal)); }
+
+/* Prüffenster für neue Fundstellen (Spec 8.5): Kopfzeile, Karten (Kit review-list), Text zum Markieren. Die Art steht in der Form (Rahmen, Unterstreichung), nicht in der Farbe. */
+.modal.pseu-review-modal { width: min(var(--size-4-18) * 8, 100%); }
+.pseu-review { display: flex; flex-direction: column; gap: var(--size-4-3); min-height: 0; }
+.pseu-review-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--size-4-2); }
+.pseu-review-summary { color: var(--text-muted); font-size: var(--font-ui-small); }
+.pseu-review-known-list { flex: 1 0 100%; margin: 0; padding-inline-start: var(--size-4-5); color: var(--text-muted); font-size: var(--font-ui-small); overflow-wrap: anywhere; }
+.pseu-review-scroll { display: flex; flex-direction: column; gap: var(--size-4-3); max-height: 60vh; overflow-y: auto; }
+.pseu-review-toggle { align-self: flex-start; min-height: calc(var(--size-4-10) + var(--size-4-1)); }
+.pseu-review-textview { display: flex; flex-direction: column; gap: var(--size-4-2); }
+.pseu-review-part { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.pseu-review-text {
+  padding: var(--size-4-2); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+  border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); background: var(--background-secondary);
+}
+.pseu-review-open { background: transparent; color: var(--text-normal); font-weight: var(--font-semibold); border: 1px solid currentcolor; border-radius: var(--radius-s); }
+.pseu-review-known { border-bottom: 1px dotted currentcolor; }
+.pseu-review-mark { display: flex; flex-wrap: wrap; align-items: center; gap: var(--size-4-2); }
+.pseu-review-mark-label { display: flex; flex-wrap: wrap; align-items: center; gap: var(--size-4-2); }
+.pseu-review-mark-kind, .pseu-review-mark-add { min-height: calc(var(--size-4-10) + var(--size-4-1)); }
+/* Am Telefon füllt das Fenster den Bildschirm; die Liste nimmt den Platz zwischen Kopf und Knöpfen. */
+.is-phone .modal.pseu-review-modal.pseu-review-full { width: 100%; max-width: 100%; height: 100%; max-height: 100%; border-radius: 0; }
+.is-phone .pseu-review-modal.pseu-review-full .pseu-review { height: 100%; }
+.is-phone .pseu-review-modal.pseu-review-full .pseu-review-scroll { flex: 1 1 auto; max-height: none; }

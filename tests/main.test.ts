@@ -6,6 +6,7 @@ import { PseudonymizerSettingTab } from "../src/obsidian/settings-tab";
 import { FakeFs } from "./helpers/fake-fs";
 import { CHAIN, ID_A, contentAt, personTable, seedFile } from "./helpers/store-fixtures";
 import { encodeRecoveryCode } from "../src/vendor/kit/recovery-code";
+import { Modal } from "./vendor/kit/obsidian-mock";
 
 function load(fs: FakeFs = new FakeFs("_pseudonymizer"), secrets: Map<string, string> = new Map()) {
   const store = new Map<string, unknown>();
@@ -202,6 +203,26 @@ describe("PseudonymizerPlugin", () => {
     const engine = plugin.engine as unknown as { persist(c?: unknown): Promise<unknown>; refresh(): Promise<void> };
     expect(await engine.persist(personTable("m4t8c6r2vp", "Berta Beispiel"))).toBeUndefined();
     expect(fs.names().filter((n) => n.endsWith(".pseudo"))).toHaveLength(2);
+  });
+  it("hands the review window to the engine: an interactive transform with an open finding opens it, closing it answers cancelled, an unattended one answers deferred", async () => {
+    const fs = new FakeFs("_pseudonymizer");
+    await seedFile(fs, { deviceId: "dev-seed", stand: 0, table: personTable(ID_A, "Max Mustermann") });
+    const secrets = new Map<string, string>();
+    const code = encodeRecoveryCode(await contentAt(CHAIN, 0));
+    if (!code.ok) throw new Error("fixture");
+    secrets.set("pseudonymizer-key", code.code);
+    const { plugin } = load(fs, secrets);
+    await plugin.onload();
+    await flush();
+    const request = { caller: "test", documentKey: "doc-1", parts: [{ id: "a", kind: "text" as const, value: "Hallo Erika Musterfrau," }] };
+    Modal.__last = null;
+    expect(await plugin.api.transform({ ...request, interactive: false })).toMatchObject({ error: "deferred" });
+    expect(Modal.__last).toBeNull();
+    const pending = plugin.api.transform({ ...request, interactive: true });
+    await flush();
+    expect(Modal.__last).not.toBeNull();
+    (Modal.__last as Modal | null)?.close();
+    expect(await pending).toMatchObject({ error: "cancelled" });
   });
   it("refreshes over all files at least every 60 seconds and picks up a file that arrived without an event", async () => {
     const fs = new FakeFs("_pseudonymizer");

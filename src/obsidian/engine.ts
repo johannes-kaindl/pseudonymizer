@@ -5,7 +5,8 @@ import type { ApiError as PseudonymizerApiError, RestoreResult, TransformRequest
 import { findPlaceholders, placeholderIdFromBytes, restorePlaceholders, type RestoreResult as PlaceholderRestore } from "../vendor/kit/placeholder";
 import { tableLookup, type PlaceholderTable } from "../vendor/kit/placeholder-table";
 import { DEFAULT_SETTINGS, type RuleGroup } from "../core/settings";
-import { applyPlan, decisionsOf, planTransform, uniqueCandidates, type Answer, type Applied, type Candidate } from "../core/transform";
+import { applyPlan, decisionsOf, planTransform, uniqueCandidates, withMarks, markCandidates, type Answer, type Applied, type Candidate, type Mark, type PlanResult } from "../core/transform";
+import type { PlaceRef, ReviewPart } from "../core/review-model";
 import type { PersistResult, TableChange } from "./table-store";
 
 /** Was die Engine vom Baustein der Gerätedateien braucht (`createTableStore`). */
@@ -17,9 +18,28 @@ export interface TableStorePort {
 const NOT_READY: PseudonymizerApiError = { error: "not-ready", message: "the table is not set up" };
 const LOCKED: PseudonymizerApiError = { error: "locked", message: "the table is locked" };
 
+/** Ein bekannter Wert, der ohne Rückfrage ersetzt wird: der Wortlaut, wie er im Text stand, sein Platzhalter und die Stellen (für den Kopf des Prüffensters und die Ansicht des Textes). */
+export interface KnownValue { value: string; placeholder: string; places: readonly PlaceRef[] }
+
+/** Was das Prüffenster außer den Karten braucht. `places` sind ALLE Fundstellen (die Karten sind `uniqueCandidates`, je Wert eine); `parts` die Texte der Anfrage; `mark` liefert die Kandidaten zu Stellen,
+ *  die der Nutzer von Hand markiert hat (dieselbe Funktion, mit der die Engine danach den Plan erweitert). */
+export interface ReviewContext {
+  documentKey: string;
+  title?: string;
+  table: PlaceholderTable;
+  lang: "de" | "en";
+  places: readonly Candidate[];
+  parts: readonly ReviewPart[];
+  known: readonly KnownValue[];
+  mark(marks: readonly Mark[]): Candidate[];
+}
+
+/** Die Antwort des Prüffensters: die Antworten nach `candidateKey` und die von Hand markierten Stellen (deren Kandidaten die Engine selbst erzeugt). */
+export interface ReviewResult { answers: ReadonlyMap<string, Answer>; marks?: readonly Mark[] }
+
 /** Das Prüffenster (Aufgabe 14) als Stelle, die die Engine ruft, wenn offene Kandidaten da sind und `interactive` gilt: eine Karte je Wert (`uniqueCandidates`), die Antworten nach `candidateKey`;
  *  ein fehlender Schlüssel gilt als Vorgabe (ersetzen, Besitzer nur aus der Struktur). `null` heißt Abbruch: nichts wird geschrieben. */
-export type ReviewFn = (candidates: Candidate[], ctx: { documentKey: string; title?: string; table: PlaceholderTable }) => Promise<ReadonlyMap<string, Answer> | null>;
+export type ReviewFn = (candidates: Candidate[], ctx: ReviewContext) => Promise<ReviewResult | null>;
 
 /** Was die Engine sonst braucht; alles hat eine Vorgabe, damit Tests nur nennen, was sie prüfen. */
 export interface EngineOptions {
@@ -29,6 +49,18 @@ export interface EngineOptions {
   review?: ReviewFn;
   /** Zufallsbytes für neue Kennungen; Vorgabe `crypto.getRandomValues`. Nur für Tests austauschbar. */
   random?: (length: number) => Uint8Array;
+}
+
+/** Die bekannten Werte des Plans, je Wortlaut einer, mit allen Stellen. */
+function knownOf(plan: PlanResult): KnownValue[] {
+  const out = new Map<string, { value: string; placeholder: string; places: PlaceRef[] }>();
+  for (const e of plan.edits) {
+    if (e.placeholder === null) continue;
+    const had = out.get(e.value) ?? { value: e.value, placeholder: e.placeholder, places: [] };
+    had.places.push({ partId: e.partId, start: e.start, end: e.end });
+    out.set(e.value, had);
+  }
+  return [...out.values()];
 }
 
 const deferred = (count: number): PseudonymizerApiError => ({ error: "deferred", message: `${String(count)} value(s) need a decision` });
@@ -78,13 +110,25 @@ export class PseudonymizerEngine implements Engine {
     // Offene Kandidaten: ohne Erlaubnis zu fragen bleibt alles, wie es ist.
     const review = this.options.review;
     if (!req.interactive || review === undefined) return deferred(uniqueCandidates(plan.candidates).length);
-    const answers = await review(uniqueCandidates(plan.candidates), { documentKey: req.documentKey, ...(req.title !== undefined ? { title: req.title } : {}), table });
-    if (answers === null) return { ...CANCELLED };
+    const result = await review(uniqueCandidates(plan.candidates), {
+      documentKey: req.documentKey,
+      ...(req.title !== undefined ? { title: req.title } : {}),
+      table,
+      lang,
+      places: plan.candidates,
+      parts: req.parts,
+      known: knownOf(plan),
+      mark: (marks) => markCandidates(req, plan, marks),
+    });
+    if (result === null) return { ...CANCELLED };
+    const answers = result.answers;
+    // Von Hand markierte Stellen gehören ab hier zum Plan (derselbe Weg wie im Fenster, `markCandidates`).
+    const full = withMarks(req, plan, result.marks ?? []);
 
     // Das Anlegen läuft in der Warteschlange auf dem frischen Stand: hat ein anderer Weg denselben Wert inzwischen angelegt, gilt dessen Kennung.
     let outcome: Applied | null = null;
     const res = await this.persist((current) => {
-      outcome = applyPlan(req, plan, current, answers, newId, lang);
+      outcome = applyPlan(req, full, current, answers, newId, lang);
       return outcome.ok ? outcome.table : current;
     });
     if (res !== undefined) {

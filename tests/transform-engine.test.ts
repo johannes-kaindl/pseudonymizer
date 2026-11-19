@@ -54,7 +54,7 @@ async function reader(fs: FakeFs): Promise<PlaceholderTable> {
   await r.store.refresh();
   return r.memory.table() as PlaceholderTable;
 }
-const accept: ReviewFn = () => Promise.resolve(new Map());
+const accept: ReviewFn = () => Promise.resolve({ answers: new Map() });
 const ERIKA_REQ = (extra: Partial<TransformRequest> = {}): TransformRequest => req([text(`Rufen Sie ${ERIKA} an.`)], { entities: [{ name: ERIKA }], interactive: true, ...extra });
 
 describe("transform: ohne offene Kandidaten", () => {
@@ -179,7 +179,7 @@ describe("transform: offene Kandidaten", () => {
   });
 
   it("„hier lassen“ wird gespeichert: der nächste unbeaufsichtigte Aufruf für dasselbe Dokument fragt nicht mehr", async () => {
-    const review: ReviewFn = (cs) => Promise.resolve(new Map<string, Answer>(cs.map((c) => [candidateKey(c), { action: "keep-here" }])));
+    const review: ReviewFn = (cs) => Promise.resolve({ answers: new Map<string, Answer>(cs.map((c) => [candidateKey(c), { action: "keep-here" }])) });
     const { engine, d, fs } = await ready({ review });
     const first = okResult(await engine.transform(ERIKA_REQ()));
     expect(first.parts[0]?.value).toBe(`Rufen Sie ${ERIKA} an.`);

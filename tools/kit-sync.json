@@ -13,6 +13,7 @@
       "source": "code-kit",
       "from": "src/ts/pure",
       "modules": [
+        "clip-context",
         "code-spans",
         "critic-markup",
         "error-message",
@@ -71,7 +72,10 @@
         "help-setting",
         "hub",
         "prompt-text",
+        "redline",
+        "redline-strings",
         "replace-file-safely",
+        "review-list",
         "secrets",
         "segmented-control",
         "status-bar-item",

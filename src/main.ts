@@ -14,6 +14,7 @@ import { createDeviceFiles, defaultDeviceFilePorts, loadOrCreateDeviceId } from 
 import { obsidianSecretStore } from "./vendor/kit-obsidian/secrets";
 import type { PseudonymizerApi } from "./vendor/kit/pseudonymizer-source";
 import { PseudonymizerEngine } from "./obsidian/engine";
+import { createReviewFn } from "./obsidian/review-modal";
 import { registerCommands, runCommand } from "./obsidian/commands";
 import { createDeviceState, type DeviceState } from "./obsidian/device";
 import { createKeyStore, type KeyStore } from "./obsidian/key-store";
@@ -58,7 +59,7 @@ export default class PseudonymizerPlugin extends Plugin {
   /** Die Tabelle im Arbeitsspeicher; die Gerätedateien füllen sie ab Aufgabe 11, bis dahin bleibt sie leer (`not-set-up`). */
   readonly memory = new MemoryTable();
   /** Die Maschine hinter der API (Aufgabe 9: zurücksetzen und erkennen; Aufgabe 11 öffnet und schreibt, Aufgabe 13 pseudonymisiert). */
-  engine: Engine = new PseudonymizerEngine(this.memory, () => this.tableStore, { rules: () => this.settings.rules });
+  engine: Engine = new PseudonymizerEngine(this.memory, () => this.tableStore, { rules: () => this.settings.rules, review: (candidates, ctx) => createReviewFn(this.app)(candidates, ctx) });
   /** Öffnet, vereinigt und schreibt die Gerätedateien (Aufgabe 11); `null`, solange sich keine Geräte-ID festhalten lässt. */
   tableStore: TableStore | null = null;
   /** Der Schlüssel dieses Geräts im Schlüsselbund; angelegt beim Laden. */

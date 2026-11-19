@@ -24,6 +24,7 @@ import { cwd } from "node:process";
 import { createBilanz, parseArgs, runDriver } from "../../tools/obsidian-cdp/bilanz.js";
 import { Cdp, attachTo, beimAbbruch, bereiteInstanzVor, clearNotices, clickReal, istAbgebrochen, notices, pollUntil, requireVisible, schliesseDialog } from "../../tools/obsidian-cdp/cdp.js";
 import { istZerstoerendJs } from "../../tools/obsidian-cdp/knoepfe.js";
+import { boxOf, capture, setWindowSize } from "../../tools/obsidian-cdp/shot.js";
 import { buildVault, requireEigenerBuild, stagingVaultDir } from "../../tools/obsidian-cdp/vault.js";
 import { closingDeviceId, decodeClosing, decodePayload, encodePayload } from "../src/core/payload.js";
 import { openEnvelope, readEnvelopeHeader, sealEnvelope } from "../src/vendor/kit/key-envelope.js";
@@ -68,6 +69,11 @@ const PUNKTE = [
   "Z Person vergessen: Wahl, Warndialog mit Werten und Grenzen, danach nennt restore den Platzhalter in forgotten, Stand n+1, die Gerätedatei auf der Platte trägt keinen Klartext der Person",
   "J Vergessen in der offenen Lesesicht: die Stellen der vergessenen Person schalten ohne Neuöffnen auf „vergessen“ (Klasse, Tooltip, kein Klartext im DOM), die der anderen Person bleiben lesbar",
   "D Gerät entfernen: Knopf im Reiter, Warnung bei nicht lesbarer Fassung, danach ist die fremde Datei weg und die eigene bleibt",
+  "B1 Prüffenster: ein transform mit interactive true öffnet es; eine Karte je Wert (Name mit zwei Stellen, eine Nummer), Kopfzeile mit Zahlen, die drei Wege als Radiogruppe mit Ersetzen als Vorgabe, „Gehört zu“ ohne Vorschlag auf „niemandem“, Abbrechen links, „übernehmen“ rechts als mod-cta",
+  "B2 Abbrechen und Esc (echte Taste): transform liefert cancelled, die Gerätedatei auf der Platte bleibt byte-gleich, ein unbeaufsichtigter transform fragt weiter (deferred)",
+  "B3 Wege und übernehmen: „Hier lassen“ lässt den Namen stehen und gilt nur für denselben documentKey, die Nummer wird ersetzt und steht in der Gerätedatei auf der Platte (mit dem Schlüssel geöffnet), die Platte änderte sich erst mit „übernehmen“",
+  "B4 Text ansehen und markieren: eine Auswahl im Text wird als Person hinzugefügt, jede freie Stelle wird eine Karte und nach „übernehmen“ mit einer Kennung ersetzt, ein längeres Wort bleibt",
+  "B5 Bilder des Prüffensters: Desktop und 402 px Breite (am Telefon bildschirmfüllend, Wege als Tippflächen von mindestens 44 px gemessen); die Bilder sind selbst anzusehen",
 ] as const;
 
 const bilanz = createBilanz({ punkte: PUNKTE });
@@ -415,6 +421,42 @@ async function exportiereAlsPdf(cdp: Cdp, pfad: string, ziel: string): Promise<{
 /** Der Text eines PDFs (poppler, `pdftotext`); `null`, wenn das Werkzeug fehlt. */
 function pdfText(datei: string): string | null {
   try { return execFileSync("pdftotext", [datei, "-"], { encoding: "utf8" }); } catch { return null; }
+}
+
+// ---- Prüffenster (Aufgabe 14) ----
+
+/** Das Prüffenster mit allem, was die Punkte B1 bis B5 lesen. */
+const PRUEF_DIALOG = `
+  const m = document.querySelector(".modal.pseu-review-modal");
+  if (!m) return null;
+  const text = (e, s) => { const x = e.querySelector(s); return x ? x.textContent.trim() : ""; };
+  const karten = Array.from(m.querySelectorAll(".okit-review-card")).map((c) => {
+    const aktiv = c.querySelector(".okit-segmented-btn.is-active");
+    const sel = c.querySelector(".okit-review-owner-select");
+    return {
+      found: text(c, ".okit-review-found"), stellen: text(c, ".okit-review-places"), treffer: text(c, "mark.okit-review-hit"),
+      radiogruppe: Boolean(c.querySelector('.okit-segmented[role="radiogroup"]')),
+      wege: Array.from(c.querySelectorAll(".okit-segmented-btn")).map((b) => b.textContent.trim()),
+      weghoehen: Array.from(c.querySelectorAll(".okit-segmented-btn")).map((b) => Math.round(b.getBoundingClientRect().height)),
+      aktiv: aktiv ? aktiv.getAttribute("data-value") : "", besitzer: sel ? sel.value : "", optionen: sel ? Array.from(sel.options).map((o) => o.value) : [],
+    };
+  });
+  const knoepfe = Array.from(m.querySelectorAll(".modal-button-container button")).map((b) => ({ text: b.textContent.trim(), cta: b.classList.contains("mod-cta") }));
+  const r = m.getBoundingClientRect();
+  return { titel: text(m, ".modal-title"), kopf: text(m, ".pseu-review-summary"), karten, knoepfe, breite: Math.round(r.width), hoehe: Math.round(r.height), voll: m.classList.contains("pseu-review-full") };
+`;
+const PRUEF_KARTE = (wert: string): string => `(Array.from(document.querySelectorAll(".modal.pseu-review-modal .okit-review-card")).find((c) => c.querySelector(".okit-review-found").textContent.trim() === ${q(wert)}) || null)`;
+const PRUEF_WEG = (wert: string, weg: string): string => `(${PRUEF_KARTE(wert)} ? ${PRUEF_KARTE(wert)}.querySelector('.okit-segmented-btn[data-value=${q(weg)}]') : null)`;
+const PRUEF_ANFRAGE = (text: string, schluessel: string, interaktiv: boolean, titel?: string): string => q({
+  caller: "gui-smoke", documentKey: schluessel, interactive: interaktiv, ...(titel !== undefined ? { title: titel } : {}), parts: [{ id: "a", kind: "text", value: text }],
+});
+/** Erfundene Texte; die Namen und Nummern sind keine echten. */
+const PRUEF_TEXT = "Hallo Erika Musterfrau,\nTel 030 7654321.\nBis bald, Hallo Erika Musterfrau,";
+const PRUEF_NOTIZ = "Hallo Gustav Probe,\nDie Kollegin Schmidt schrieb. Schmidt ruft an, Schmidtke nicht.";
+
+function dateiHash(basePath: string, eigeneId: string): string | null {
+  const pfad = join(basePath, ORDNER, `${eigeneId}.pseudo`);
+  return existsSync(pfad) ? createHash("sha256").update(readFileSync(pfad)).digest("hex") : null;
 }
 
 function setup(): void {
@@ -1067,6 +1109,145 @@ async function main(): Promise<void> {
       `Stellen der vergessenen Person=${maxStellen.length} (alle vergessen=${maxStellen.every((x) => x.forgotten)}), Klartext von Max im DOM=${nachVergessen ? KLARTEXT_MAX.test(nachVergessen.html) : null}, Berta=${q(bertaStelle.map((x) => x.text))}`);
     await cdp.evaluate(`const l = ${BLATT(NOTIZ_LESEN)}; if (l) l.detach(); return true;`);
     await cdp.send("Network.disable");
+
+    // --- B ---
+    console.log("\nB · Prüffenster");
+    // Der transform läuft im Renderer und bleibt offen, bis das Fenster antwortet; der Treiber hält das Versprechen in `window` und holt es nach dem Klick.
+    const starteB = (text: string, schluessel: string, titel?: string): Promise<boolean> =>
+      cdp.evaluate<boolean>(`window.__pseuB = ${P}.api.transform(${PRUEF_ANFRAGE(text, schluessel, true, titel)}); return true;`);
+    const holeB = (): Promise<unknown> => cdp.evaluate<unknown>(`return await window.__pseuB;`);
+    const unbeaufsichtigt = (text: string, schluessel: string): Promise<unknown> =>
+      cdp.evaluate<unknown>(`return await ${P}.api.transform(${PRUEF_ANFRAGE(text, schluessel, false)});`);
+    const bilderDir = mkdtempSync(join(tmpdir(), "pseu-pruef-"));
+    const fensterVorher = await cdp.evaluate<number[]>(`return window.require("electron").remote.getCurrentWindow().getSize();`);
+    await setWindowSize(cdp, 1200, 800);
+
+    // B1: das Fenster öffnet, Aufbau lesen, Desktop-Bild aufnehmen
+    await starteB(PRUEF_TEXT, "smoke-pruef-1", "Rückfrage zum Angebot");
+    const b1 = await pollUntil<{ titel: string; kopf: string; karten: { found: string; stellen: string; treffer: string; radiogruppe: boolean; wege: string[]; aktiv: string; besitzer: string; optionen: string[] }[]; knoepfe: { text: string; cta: boolean }[]; breite: number }>(cdp, PRUEF_DIALOG, 10_000, 250);
+    const kName = b1?.karten.find((k) => k.found === "Erika Musterfrau");
+    const kTel = b1?.karten.find((k) => k.found === "030 7654321");
+    const letzte = b1?.knoepfe.slice(-2) ?? [];
+    record("B1 Prüffenster: ein transform mit interactive true öffnet es; eine Karte je Wert (Name mit zwei Stellen, eine Nummer), Kopfzeile mit Zahlen, die drei Wege als Radiogruppe mit Ersetzen als Vorgabe, „Gehört zu“ ohne Vorschlag auf „niemandem“, Abbrechen links, „übernehmen“ rechts als mod-cta",
+      Boolean(b1) && b1!.titel === 'Pseudonymize: "Rückfrage zum Angebot"' && /^2 new findings · \d+ known values? (is|are) replaced$/.test(b1!.kopf) && b1!.karten.length === 2
+        && kName?.stellen === "2 places" && kName.treffer === "Erika Musterfrau" && kTel?.stellen === "1 place"
+        && b1!.karten.every((k) => k.radiogruppe && k.aktiv === "replace" && k.wege.join("|") === "Replace|Keep here|Always keep")
+        && kTel!.besitzer === "nobody" && !kTel!.optionen.includes("suggested") && kName!.besitzer === "new-person"
+        && letzte.length === 2 && letzte[0]!.text === "Cancel" && !letzte[0]!.cta && /^Replace 2, apply$/.test(letzte[1]!.text) && letzte[1]!.cta,
+      `Titel=${q(b1?.titel)}, Kopf=${q(b1?.kopf)}, Karten=${q(b1?.karten.map((k) => [k.found, k.stellen, k.aktiv, k.besitzer]))}, Knöpfe=${q(letzte)}`);
+    let desktopBild = "";
+    if (b1) {
+      const box = await boxOf(cdp, ".modal.pseu-review-modal", 8);
+      desktopBild = join(bilderDir, "pruefen-desktop.png");
+      writeFileSync(desktopBild, await capture(cdp, box ?? undefined, 1));
+    }
+
+    // B5 (Telefon): bildschirmfüllend nachgestellt. Das Plugin setzt `pseu-review-full` über `Platform.isPhone`, das der Treiber nicht umschalten kann; er setzt Klasse und Körperklassen selbst und die Fensterbreite auf 402 px. Eine Nachstellung, kein echtes Telefon.
+    let telefonBild = "";
+    let telefon: { breite: number; hoehe: number; weghoehen: number[] } | null = null;
+    if (b1) {
+      await cdp.evaluate(`document.body.classList.add("is-phone", "is-mobile"); document.querySelector(".modal.pseu-review-modal").classList.add("pseu-review-full"); return true;`);
+      await setWindowSize(cdp, 402, 874);
+      telefon = await pollUntil<{ breite: number; hoehe: number; weghoehen: number[] }>(cdp, `
+        const d = (() => { ${PRUEF_DIALOG} })();
+        return d ? { breite: d.breite, hoehe: d.hoehe, weghoehen: d.karten.flatMap((k) => k.weghoehen) } : null;
+      `, 8000, 250);
+      telefonBild = join(bilderDir, "pruefen-402.png");
+      writeFileSync(telefonBild, await capture(cdp, undefined, 1));
+      await cdp.evaluate(`document.body.classList.remove("is-phone", "is-mobile"); const m = document.querySelector(".modal.pseu-review-modal"); if (m) m.classList.remove("pseu-review-full"); return true;`);
+      await setWindowSize(cdp, 1200, 800);
+    }
+    const bildGroesse = (pfad: string): number => (pfad !== "" && existsSync(pfad) ? statSync(pfad).size : 0);
+    record("B5 Bilder des Prüffensters: Desktop und 402 px Breite (am Telefon bildschirmfüllend, Wege als Tippflächen von mindestens 44 px gemessen); die Bilder sind selbst anzusehen",
+      bildGroesse(desktopBild) > 5000 && bildGroesse(telefonBild) > 5000 && telefon !== null && telefon.breite >= 380 && telefon.weghoehen.length > 0 && telefon.weghoehen.every((h) => h >= 44),
+      `Desktop=${desktopBild} (${bildGroesse(desktopBild)} B), 402 px=${telefonBild} (${bildGroesse(telefonBild)} B), Fenster am Telefon=${q(telefon)} (nachgestellt über Klassen, kein echtes Telefon)`);
+
+    // B2: Abbrechen schreibt nichts; erst der Knopf, dann Esc mit echter Taste
+    const vorB2 = dateiHash(info.basePath, eigeneId);
+    await klickeKnopf(cdp, "Cancel");
+    const b2abbruch = b1 ? await holeB() : null;
+    const nachCancel = dateiHash(info.basePath, eigeneId);
+    await starteB(PRUEF_TEXT, "smoke-pruef-1");
+    const b2offen = await pollUntil<unknown>(cdp, PRUEF_DIALOG, 10_000, 250);
+    if (b2offen) {
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+    }
+    const geschlossen = b2offen ? await pollUntil<boolean>(cdp, `return document.querySelector(".modal.pseu-review-modal") ? null : true;`, 8000, 250) : null;
+    const esc = b2offen ? await holeB() : null;
+    const nachEsc = dateiHash(info.basePath, eigeneId);
+    const weiterFragt = await unbeaufsichtigt(PRUEF_TEXT, "smoke-pruef-1");
+    record("B2 Abbrechen und Esc (echte Taste): transform liefert cancelled, die Gerätedatei auf der Platte bleibt byte-gleich, ein unbeaufsichtigter transform fragt weiter (deferred)",
+      Boolean(b1) && (b2abbruch as { error?: string } | null)?.error === "cancelled" && vorB2 !== null && nachCancel === vorB2
+        && Boolean(b2offen) && Boolean(geschlossen) && (esc as { error?: string } | null)?.error === "cancelled" && nachEsc === vorB2
+        && (weiterFragt as { error?: string } | null)?.error === "deferred",
+      `Abbrechen=${q(b2abbruch)}, Datei gleich=${nachCancel === vorB2}, Esc: Fenster offen=${Boolean(b2offen)}, geschlossen=${Boolean(geschlossen)}, Antwort=${q(esc)}, Datei gleich=${nachEsc === vorB2}, unbeaufsichtigt=${q(weiterFragt)}`);
+    await clearNotices(cdp);
+
+    // B3: Hier lassen für den Namen, die Nummer wird ersetzt; erst „übernehmen“ schreibt
+    await starteB(PRUEF_TEXT, "smoke-pruef-1");
+    const b3offen = await pollUntil<unknown>(cdp, PRUEF_DIALOG, 10_000, 250);
+    const b3weg = b3offen ? await clickReal(cdp, PRUEF_WEG("Erika Musterfrau", "keep-here")) : false;
+    const b3zahl = b3weg ? await pollUntil<string>(cdp, `
+      const b = Array.from(document.querySelectorAll(".modal.pseu-review-modal .modal-button-container button")).pop();
+      return b && b.textContent.trim() === "Replace 1, apply" ? b.textContent.trim() : null;
+    `, 5000, 200) : null;
+    const vorApply = dateiHash(info.basePath, eigeneId);
+    const b3apply = b3zahl ? await klickeKnopf(cdp, "Replace 1, apply") : false;
+    const b3ergebnis = b3apply ? await holeB() as { parts?: { value: string }[] } | null : null;
+    const b3wert = b3ergebnis?.parts?.[0]?.value ?? "";
+    const nachApply = dateiHash(info.basePath, eigeneId);
+    const schluesselB = await leseSchluessel(cdp);
+    const dateiB = schluesselB && eigeneId ? await oeffneEigeneDatei(info.basePath, eigeneId, schluesselB) : null;
+    const gleichesDokument = await unbeaufsichtigt("Hallo Erika Musterfrau,", "smoke-pruef-1") as { parts?: { value: string }[]; error?: string };
+    const anderesDokument = await unbeaufsichtigt("Hallo Erika Musterfrau,", "smoke-pruef-2") as { error?: string };
+    record("B3 Wege und übernehmen: „Hier lassen“ lässt den Namen stehen und gilt nur für denselben documentKey, die Nummer wird ersetzt und steht in der Gerätedatei auf der Platte (mit dem Schlüssel geöffnet), die Platte änderte sich erst mit „übernehmen“",
+      Boolean(b3offen) && b3weg && Boolean(b3zahl) && vorApply === vorB2 && b3apply
+        && /^Hallo Erika Musterfrau,\nTel Telefon_[0-9a-z]{10}\.\nBis bald, Hallo Erika Musterfrau,$/.test(b3wert)
+        && nachApply !== null && nachApply !== vorB2 && dateiB !== null && dateiB.tabelle.includes("030 7654321")
+        && gleichesDokument.parts?.[0]?.value === "Hallo Erika Musterfrau," && anderesDokument.error === "deferred",
+      `Weg gesetzt=${b3weg}, Knopf=${q(b3zahl)}, Platte vor „übernehmen“ unverändert=${vorApply === vorB2}, Ergebnis=${q(b3wert)}, Platte danach geändert=${nachApply !== vorB2}, Nummer in der Datei=${dateiB?.tabelle.includes("030 7654321") ?? null}, gleicher Schlüssel unbeaufsichtigt=${q(gleichesDokument)}, anderer=${q(anderesDokument)}`);
+    await clearNotices(cdp);
+
+    // B4: Text ansehen, Auswahl hinzufügen
+    await starteB(PRUEF_NOTIZ, "smoke-pruef-3");
+    const b4offen = await pollUntil<{ karten: { found: string }[] }>(cdp, PRUEF_DIALOG, 10_000, 250);
+    const b4text = b4offen ? await clickReal(cdp, `(Array.from(document.querySelectorAll(".modal.pseu-review-modal button")).find((b) => b.textContent.trim() === "Look at the text and mark more places") || null)`) : false;
+    const b4sichtbar = b4text ? await pollUntil<boolean>(cdp, `return document.querySelector(".modal.pseu-review-modal .pseu-review-text") ? true : null;`, 5000, 200) : null;
+    // Eine echte Auswahl im Text; das Fenster merkt sie sich (`selectionchange`).
+    const b4auswahl = b4sichtbar ? await cdp.evaluate<string>(`
+      const wurzel = document.querySelector(".modal.pseu-review-modal .pseu-review-text");
+      const w = document.createTreeWalker(wurzel, NodeFilter.SHOW_TEXT);
+      let n;
+      while ((n = w.nextNode())) {
+        const i = n.textContent.indexOf("Schmidt ruft");
+        if (i >= 0) { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + "Schmidt".length); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); return s.toString(); }
+      }
+      return "";
+    `) : "";
+    await new Promise((r) => setTimeout(r, 400));
+    const b4art = b4auswahl === "Schmidt" ? await cdp.evaluate<boolean>(`
+      const s = document.querySelector(".modal.pseu-review-modal .pseu-review-mark-kind");
+      if (!s) return false;
+      s.value = "person"; s.dispatchEvent(new Event("change"));
+      return true;
+    `) : false;
+    const b4hinzu = b4art ? await clickReal(cdp, `(Array.from(document.querySelectorAll(".modal.pseu-review-modal button")).find((b) => b.textContent.trim() === "Add selection") || null)`) : false;
+    const b4neu = b4hinzu ? await pollUntil<{ karten: { found: string; stellen: string }[]; knoepfe: { text: string }[] }>(cdp, `
+      const d = (() => { ${PRUEF_DIALOG} })();
+      return d && d.karten.some((k) => k.found === "Schmidt") ? d : null;
+    `, 5000, 200) : null;
+    const b4apply = b4neu ? await klickeKnopf(cdp, b4neu.knoepfe[b4neu.knoepfe.length - 1]?.text ?? "") : false;
+    const b4ergebnis = b4apply ? await holeB() as { parts?: { value: string }[] } | null : null;
+    const b4wert = b4ergebnis?.parts?.[0]?.value ?? "";
+    const b4schmidt = /^Hallo (Gustav Probe|Person_[0-9a-z]{10}),\nDie Kollegin Person_([0-9a-z]{10}) schrieb\. Person_\2 ruft an, Schmidtke nicht\.$/.exec(b4wert);
+    record("B4 Text ansehen und markieren: eine Auswahl im Text wird als Person hinzugefügt, jede freie Stelle wird eine Karte und nach „übernehmen“ mit einer Kennung ersetzt, ein längeres Wort bleibt",
+      Boolean(b4offen) && b4text && Boolean(b4sichtbar) && b4auswahl === "Schmidt" && b4art && b4hinzu && Boolean(b4neu)
+        && b4neu!.karten.find((k) => k.found === "Schmidt")?.stellen === "2 places" && b4apply && b4schmidt !== null,
+      `Text gezeigt=${Boolean(b4sichtbar)}, Auswahl=${q(b4auswahl)}, Karten danach=${q(b4neu?.karten.map((k) => [k.found, k.stellen]))}, Ergebnis=${q(b4wert)}`);
+    await clearNotices(cdp);
+    await setWindowSize(cdp, fensterVorher[0] ?? 1200, fensterVorher[1] ?? 800);
+    console.log(`  Bilder des Prüffensters: ${bilderDir}`);
 
     // --- D ---
     console.log("\nD · Gerät entfernen");

@@ -24,6 +24,10 @@
 // Benannte Lücken (Spec 8.4): Ein Dritter mitten im Satz ohne Anrede („die Kollegin Schmidt“) wird nicht gefunden. Wer in `keep` steht, wird nur geschützt, wenn er als eigene Fundstelle auftaucht
 // oder als Wort im Text steht; Einträge der Ausnahmeliste und „hier lassen“ sperren nur die Fundstelle, die sie selbst treffen. Eine Fundstelle in einem Wikilink-Ziel (`[[Max Mustermann]]`) bleibt stehen
 // (das Ziel ist geschützt), der Anzeigetext nach `|` ist frei.
+// Besitzervorschlag aus der Struktur (Spec 8.1 Leitplanke 1): das Paar aus dem Mail-Kopf (`entities`) und der Signaturblock des Absenders. Ein Wert, den die Regel `signature` im Block nach der Grußformel
+// (oder hinter `-- `) findet (Telefon, Mail, Adresse, IBAN), bekommt als `suggestedOwner` den Namen, der im selben Block davor steht (keine Leerzeile dazwischen); steht dort kein Name, gibt es keinen
+// Vorschlag (Zentrale, `info@`). Das Paar aus dem Kopf geht vor. Es bleibt ein Vorschlag: bestätigt wird im Prüffenster, im unbeaufsichtigten Lauf ändert er nichts (dort werden nur bekannte Werte ersetzt).
+// Von Hand markierte Stellen (`Mark`, Prüffenster „weitere Stellen markieren“): jeder Wortlaut wird an allen freien Stellen des Textes ein Kandidat ohne Besitzervorschlag.
 // Suchen im Text: eine Schleife über Wortanfänge, kein verschachtelter Quantor; die Erkenner und die Bereiche kommen linear aus dem Kit.
 
 import {
@@ -59,6 +63,7 @@ import {
   detectSalutation,
   detectSignature,
   type Detector,
+  type Finding,
   type FindingKind,
 } from "../vendor/kit/pii-detect";
 import { listReplaceableSpans, type TextRange } from "../vendor/kit/replaceable-spans";
@@ -336,7 +341,28 @@ function keepMatcher(keep: readonly string[], decisions: Decisions, documentKey:
   return (field, text) => set.has(`${field ?? ""}|${normalizeTableValue(field, text)}`) || decisions.isException(text) || decisions.keepHere(documentKey, text);
 }
 
-interface Hit { start: number; end: number; text: string; field: PlaceholderField | null; kind: CandidateKind; rank: number; kept: boolean; placeholder: string | null; confidence: number }
+/** Steht zwischen zwei Stellen eine Leerzeile? (Ein Signaturblock endet an ihr.) */
+function hasBlankLine(between: string): boolean {
+  let afterBreak = false;
+  for (let i = 0; i < between.length; i++) {
+    const ch = between.charAt(i);
+    if (ch === "\n") { if (afterBreak) return true; afterBreak = true; }
+    else if (ch !== " " && ch !== "\t" && ch !== "\r") afterBreak = false;
+  }
+  return false;
+}
+
+/** Strukturbeleg „Signaturblock“ (Spec 8.1 Leitplanke 1, 8.5): Ein Wert, den die Regel `signature` im Block nach der Grußformel (oder hinter `-- `) findet, wird der Person vorgeschlagen, deren Name
+ *  in diesem Block steht: der nächste Name davor, ohne Leerzeile dazwischen (der Block endet an ihr). Steht kein Name im Block (Zentrale, `info@`), gibt es keinen Vorschlag. Nur ein Vorschlag:
+ *  die Bestätigung bleibt im Prüffenster; im unbeaufsichtigten Lauf ändert er nichts, weil dort nur bekannte Werte ersetzt werden. */
+function signatureOwner(view: string, f: Finding, names: readonly Finding[]): string | null {
+  if (f.rule !== "signature" || f.kind === "person") return null;
+  let best: Finding | null = null;
+  for (const n of names) if (n.end <= f.start && (best === null || n.end > best.end)) best = n;
+  return best !== null && !hasBlankLine(view.slice(best.end, f.start)) ? best.text : null;
+}
+
+interface Hit { start: number; end: number; text: string; field: PlaceholderField | null; kind: CandidateKind; rank: number; kept: boolean; placeholder: string | null; confidence: number; owner: string | null }
 
 const kindOfField = (f: PlaceholderField | null): CandidateKind => (f === null ? "person" : f);
 
@@ -393,24 +419,33 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
     const { view, ranges } = viewOf(part);
     if (ranges.length === 0) continue;
     const hits: Hit[] = [];
-    const push = (start: number, end: number, field: PlaceholderField | null, kind: CandidateKind, rank: number, confidence: number, tag: Tag | null): void => {
+    const push = (start: number, end: number, field: PlaceholderField | null, kind: CandidateKind, rank: number, confidence: number, tag: Tag | null, owner: string | null = null): void => {
       if (end <= start || !inside(ranges, start, end)) return;
       const text = view.slice(start, end);
       const placeholder = lookup(field, text);
       const kept = tag === "keep" || keep(field, text);
-      hits.push({ start, end, text, field, kind, rank: kept ? RANK_KEPT : placeholder !== null ? RANK_KNOWN : rank, kept, placeholder: kept ? null : placeholder, confidence });
+      hits.push({ start, end, text, field, kind, rank: kept ? RANK_KEPT : placeholder !== null ? RANK_KNOWN : rank, kept, placeholder: kept ? null : placeholder, confidence, owner });
     };
     for (const h of scanForms(view, forms)) {
       const field = h.field;
       push(h.start, h.end, field, kindOfField(field), RANK_ENTITY, CONFIDENCE.high, h.tag);
     }
-    for (const d of DETECTORS) {
-      for (const f of d.run(view)) {
+    const found = DETECTORS.map((d) => ({ group: d.group, findings: d.run(view) }));
+    // Die Namen, die ein Signaturblock tragen kann: die Namenszeile nach der Grußformel und die erste Zeile hinter `-- `.
+    const blockNames = found.flatMap((g) => g.findings).filter((f) => f.kind === "person" && (f.rule === "closing" || f.rule === "signature") && !keep(null, f.text));
+    // Derselbe Wert wird oft von zwei Regeln gefunden (die Mail-Adresse als Muster und als Signatur); der Besitzervorschlag hängt an der Stelle, nicht an der Regel, die gewinnt.
+    const owners = new Map<string, string>();
+    for (const g of found) for (const f of g.findings) {
+      const owner = signatureOwner(view, f, blockNames);
+      if (owner !== null) owners.set(`${String(f.start)}:${String(f.end)}`, owner);
+    }
+    for (const g of found) {
+      for (const f of g.findings) {
         const kind = KIND_OF_FINDING[f.kind];
         const field = FIELD_OF_KIND[kind];
         // Eine abgeschaltete Gruppe meldet nichts Neues, aber ein bekannter Wert wird weiter ersetzt.
-        if (!enabled[d.group] && lookup(field, f.text) === null && !keep(field, f.text)) continue;
-        push(f.start, f.end, field, kind, CONFIDENCE_RANK[f.confidence], CONFIDENCE[f.confidence], null);
+        if (!enabled[g.group] && lookup(field, f.text) === null && !keep(field, f.text)) continue;
+        push(f.start, f.end, field, kind, CONFIDENCE_RANK[f.confidence], CONFIDENCE[f.confidence], null, owners.get(`${String(f.start)}:${String(f.end)}`) ?? null);
       }
     }
     // Überlappung: der längere gewinnt, bei Gleichstand der Rang; `applyEdits` ist die Quelle der Regel.
@@ -422,13 +457,75 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
         replacements.set(h.text, h.placeholder);
         edits.push({ partId: part.id, start: h.start, end: h.end, value: h.text, field: h.field, kind: h.kind, placeholder: h.placeholder, candidate: null });
       } else {
-        const candidate: Candidate = { value: h.text, kind: h.kind, partId: part.id, start: h.start, end: h.end, confidence: h.confidence, suggestedOwner: partnerOf(h.field, h.text) };
+        const candidate: Candidate = { value: h.text, kind: h.kind, partId: part.id, start: h.start, end: h.end, confidence: h.confidence, suggestedOwner: partnerOf(h.field, h.text) ?? h.owner };
         candidates.push(candidate);
         edits.push({ partId: part.id, start: h.start, end: h.end, value: h.text, field: h.field, kind: h.kind, placeholder: null, candidate });
       }
     }
   }
   return { replacements, candidates, edits, entities };
+}
+
+// ---- Von Hand markierte Stellen ------------------------------------------------------------------------------------------------------------------
+
+/** Eine Stelle, die der Nutzer im Prüffenster von Hand markiert hat („Text ansehen und weitere Stellen markieren“, Spec 8.5): der Wortlaut und die Art. Jede Fundstelle dieses Wortlauts im Text wird ein Kandidat. */
+export type Mark = { value: string; kind: CandidateKind };
+
+/** Die Kandidaten und Ersetzungen zu den Markierungen: jede Stelle, an der der Wortlaut als ganzes Wort steht, in einem ersetzbaren Bereich (nicht in Code, Link-Zielen, URLs, Tags) und ohne eine Stelle zu
+ *  berühren, die der Plan schon belegt (bekannt oder offen). Die Sicherheit ist 1, weil der Mensch es gesagt hat; einen Besitzervorschlag gibt es nicht (Spec 8.1 Leitplanke 1). In Dateinamen
+ *  gilt `_`/`-` als Leerzeichen wie beim Erkennen. */
+function placeMarks(req: TransformRequest, plan: PlanResult, marks: readonly Mark[]): { candidates: Candidate[]; edits: PlannedEdit[] } {
+  const candidates: Candidate[] = [];
+  const edits: PlannedEdit[] = [];
+  const taken = new Map<string, TextRange[]>();
+  for (const e of plan.edits) {
+    const list = taken.get(e.partId) ?? [];
+    list.push({ start: e.start, end: e.end });
+    taken.set(e.partId, list);
+  }
+  const seen = new Set<string>();
+  for (const mark of marks) {
+    const key = candidateKey(mark);
+    if (seen.has(key) || mark.value.trim() === "") continue;
+    seen.add(key);
+    for (const part of req.parts) {
+      if (part.value === "") continue;
+      const { view, ranges } = viewOf(part);
+      const needle = part.kind === "filename" ? mark.value.replace(/[_-]/g, " ") : mark.value;
+      if (needle.trim() === "") continue;
+      const occupied = taken.get(part.id) ?? [];
+      let from = 0;
+      for (;;) {
+        const at = view.indexOf(needle, from);
+        if (at < 0) break;
+        from = at + needle.length;
+        const end = at + needle.length;
+        const first = codePointAt(needle, 0);
+        const last = codePointBefore(needle, needle.length);
+        if (isWord(first) && isWord(codePointBefore(view, at))) continue;
+        if (isWord(last) && isWord(codePointAt(view, end))) continue;
+        if (!inside(ranges, at, end) || occupied.some((o) => at < o.end && o.start < end)) continue;
+        const candidate: Candidate = { value: needle, kind: mark.kind, partId: part.id, start: at, end, confidence: 1, suggestedOwner: null };
+        candidates.push(candidate);
+        edits.push({ partId: part.id, start: at, end, value: needle, field: FIELD_OF_KIND[mark.kind], kind: mark.kind, placeholder: null, candidate });
+        occupied.push({ start: at, end });
+      }
+      taken.set(part.id, occupied);
+    }
+  }
+  return { candidates, edits };
+}
+
+/** Die Kandidaten zu den Markierungen (für die Karten des Prüffensters). Leer, wenn der Wortlaut nirgends als freies Wort steht. */
+export function markCandidates(req: TransformRequest, plan: PlanResult, marks: readonly Mark[]): Candidate[] {
+  return placeMarks(req, plan, marks).candidates;
+}
+
+/** Der Plan mit den markierten Stellen als weiteren Kandidaten und Ersetzungen. */
+export function withMarks(req: TransformRequest, plan: PlanResult, marks: readonly Mark[]): PlanResult {
+  if (marks.length === 0) return plan;
+  const added = placeMarks(req, plan, marks);
+  return { ...plan, candidates: [...plan.candidates, ...added.candidates], edits: [...plan.edits, ...added.edits] };
 }
 
 // ---- Ausführen ---------------------------------------------------------------------------------------------------------------------------------
@@ -445,7 +542,7 @@ export type Applied = ({ ok: true } & Outcome) | { ok: false };
 
 /** Die Vorgabe zu einem Kandidaten, wenn niemand etwas anderes sagt: ersetzen, Besitzer nur aus der Struktur (Spec 8.1 Leitplanke 1). Ein Name, dessen Adresse die Tabelle schon einer Person oder
  *  Organisation zuordnet, wird eine weitere Schreibweise dieser Person. */
-function defaultAnswer(c: Candidate, table: PlaceholderTable): Answer {
+export function defaultAnswer(c: Candidate, table: PlaceholderTable): Answer {
   if ((c.kind === "person" || c.kind === "organisation") && c.suggestedOwner !== null) {
     const holder = tableFindValue(table, "mail", c.suggestedOwner);
     if (holder !== undefined && holder.carrier !== null) return { action: "replace", entry: holder.id };

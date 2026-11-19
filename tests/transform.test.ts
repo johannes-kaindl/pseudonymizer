@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, RULE_GROUPS, type RuleGroup } from "../src/core/settings";
-import { applyPlan, candidateKey, decisionsOf, planTransform, type Answer, type Applied, type PlanResult } from "../src/core/transform";
+import { applyPlan, candidateKey, decisionsOf, markCandidates, planTransform, withMarks, type Answer, type Applied, type PlanResult } from "../src/core/transform";
 import { findPlaceholders, formatPlaceholder } from "../src/vendor/kit/placeholder";
 import { emptyTable, tableAddEntry, tableFindValue, tableIsException, tableIsPlain, tableSetException, type PlaceholderTable } from "../src/vendor/kit/placeholder-table";
 import type { TransformPart, TransformRequest } from "../src/vendor/kit/pseudonymizer-source";
@@ -396,5 +396,97 @@ describe("Laufzeit", () => {
     expect(run(10)).toBe(20);
     const r = pruefeLinear((n: number) => run(n), (n) => Math.max(1, Math.floor(n / 50)));
     expect(r.linear, r.message).toBe(true);
+  });
+});
+
+describe("Signaturblock als Strukturbeleg für den Besitzervorschlag", () => {
+  const owners = (text: string, extra: Partial<TransformRequest> = {}): [string, string | null][] => plan(req([part("a", text)], extra)).candidates.map((c) => [c.value, c.suggestedOwner]);
+
+  it("Telefon, Mail und Adresse im Block hinter der Grußformel bekommen den Namen des Blocks vorgeschlagen, der Name selbst nicht", () => {
+    expect(owners("Bitte melden Sie sich.\n\nViele Grüße\nErika Musterfrau\nTel. 030 7654321\nerika@example.org\nMusterstraße 5, 10115 Berlin")).toEqual([
+      ["Erika Musterfrau", null],
+      ["030 7654321", "Erika Musterfrau"],
+      ["erika@example.org", "Erika Musterfrau"],
+      ["Musterstraße 5, 10115 Berlin", "Erika Musterfrau"],
+    ]);
+  });
+
+  it("hinter „-- “ gilt die Namenszeile ebenso", () => {
+    expect(owners("Text\n-- \nBerta Beispiel\nTel. 030 5555555")).toEqual([["Berta Beispiel", null], ["030 5555555", "Berta Beispiel"]]);
+  });
+
+  it("geteilte Daten ohne Namen im Block (Zentrale, info@) bleiben ohne Vorschlag", () => {
+    expect(owners("Bitte melden Sie sich.\n\nViele Grüße\n\nTel. 030 5555555\ninfo@example.org")).toEqual([["030 5555555", null], ["info@example.org", null]]);
+  });
+
+  it("eine Nummer hinter einer Leerzeile gehört nicht mehr zum Block und bekommt keinen Vorschlag", () => {
+    expect(owners("Viele Grüße\nErika Musterfrau\nTel. 030 7654321\n\nZentrale 030 5555555")).toEqual([["Erika Musterfrau", null], ["030 7654321", "Erika Musterfrau"], ["030 5555555", null]]);
+  });
+
+  it("eine Nummer im Fließtext (kein Block) bekommt keinen Vorschlag, auch wenn weiter oben ein Name unter einer Grußformel steht", () => {
+    expect(owners("Hallo Erika,\n\nruf mich unter 030 7654321 an.")).toEqual([["Erika", null], ["030 7654321", null]]);
+  });
+
+  it("das Paar aus dem Mail-Kopf geht vor dem Signaturblock", () => {
+    const r = owners("Viele Grüße\nBerta Beispiel\nberta@example.org", { entities: [{ name: "Erika Musterfrau", email: "berta@example.org" }] });
+    expect(r.find(([v]) => v === "berta@example.org")?.[1]).toBe("Erika Musterfrau");
+  });
+
+  it("ein Name, der in keep steht (eigene Identität), wird nicht vorgeschlagen", () => {
+    expect(owners("Viele Grüße\nErika Musterfrau\nTel. 030 7654321", { keep: ["Erika Musterfrau"] })).toEqual([["030 7654321", null]]);
+  });
+
+  it("ein bekannter Name im Block wird vorgeschlagen; die Vorgabe hängt die Nummer an diesen Eintrag", () => {
+    const r = req([part("a", "Viele Grüße\nMax Mustermann\nTel. 030 5555555")]);
+    const p = plan(r);
+    expect(p.candidates.map((c) => [c.value, c.suggestedOwner])).toEqual([["030 5555555", "Max Mustermann"]]);
+    const a = ok(applyPlan(r, p, sampleTable(), new Map(), counterIds()));
+    expect(a.parts[0]?.value).toBe(`Viele Grüße\n${P}\nTel. ${P}_Telefon_3`);
+  });
+
+  it("unbeaufsichtigt ändert der Vorschlag nichts: nur bekannte Werte werden ersetzt, die offene Nummer bleibt Kandidat", () => {
+    const r = req([part("a", "Viele Grüße\nErika Musterfrau\nTel. 030 7654321")]);
+    expect(plan(r).candidates).toHaveLength(2);
+    expect(known(r)[0]).toBe("Viele Grüße\nErika Musterfrau\nTel. 030 7654321");
+  });
+});
+
+describe("von Hand markierte Stellen", () => {
+  const text = "Die Kollegin Schmidt schrieb. Schmidt ruft an, Schmidtke nicht: `Schmidt` im Code.";
+
+  it("jede freie Stelle des Wortlauts wird ein Kandidat, ein längeres Wort und Code nicht", () => {
+    const r = req([part("a", text)]);
+    const c = markCandidates(r, plan(r), [{ value: "Schmidt", kind: "person" }]);
+    expect(c.map((x) => [x.value, x.start, x.suggestedOwner])).toEqual([["Schmidt", 13, null], ["Schmidt", 30, null]]);
+  });
+
+  it("eine Stelle, die der Plan schon belegt (bekannter Wert), wird nicht noch einmal angeboten", () => {
+    const r = req([part("a", "Max Mustermann und Mustermann")]);
+    const c = markCandidates(r, plan(r), [{ value: "Mustermann", kind: "person" }]);
+    expect(c.map((x) => x.start)).toEqual([19]);
+  });
+
+  it("schließt die benannte Lücke „die Kollegin Schmidt“: mit der Markierung wird die Stelle ersetzt, alle Stellen mit derselben Kennung", () => {
+    const r = req([part("a", "Die Kollegin Schmidt schrieb. Schmidt ruft an.")]);
+    const p = plan(r);
+    expect(p.candidates).toEqual([]);
+    const full = withMarks(r, p, [{ value: "Schmidt", kind: "person" }]);
+    const a = ok(applyPlan(r, full, sampleTable(), new Map(), counterIds()));
+    expect(a.parts[0]?.value).toBe("Die Kollegin Person_0000000001 schrieb. Person_0000000001 ruft an.");
+  });
+
+  it("eine markierte Nummer gehört vorgabegemäß niemandem", () => {
+    const r = req([part("a", "Sondernummer 99 12 34")]);
+    const full = withMarks(r, plan(r), [{ value: "99 12 34", kind: "phone" }]);
+    expect(ok(applyPlan(r, full, sampleTable(), new Map(), counterIds())).parts[0]?.value).toBe("Sondernummer Telefon_0000000001");
+  });
+
+  it("im Dateinamen gilt _ als Leerzeichen; ohne Markierung bleibt der Plan, wie er ist", () => {
+    const r = req([part("a", "Rechnung_Erika_Musterfrau.pdf", "filename")]);
+    expect(markCandidates(r, plan(r), [{ value: "Erika_Musterfrau", kind: "person" }]).map((x) => x.value)).toEqual(["Erika Musterfrau"]);
+    const p = plan(r);
+    expect(withMarks(r, p, [])).toBe(p);
+    const full = withMarks(r, p, [{ value: "Erika_Musterfrau", kind: "person" }]);
+    expect(ok(applyPlan(r, full, sampleTable(), new Map(), counterIds())).parts[0]?.value).toBe("Rechnung-Person_0000000001.pdf");
   });
 });
