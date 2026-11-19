@@ -1,0 +1,17 @@
+Von: Erika Musterfrau <erika@example.org>
+An: Max Mustermann <max@example.org>
+Betreff: Terminanfrage
+
+Sehr geehrter Herr Mustermann,
+
+danke für Ihre Nachricht. Frau Dr. Musterfrau erreichen Sie unter 030 1234567.
+Die Rechnung geht an DE89 3704 0044 0532 0130 00.
+
+Viele Grüße
+Erika Musterfrau
+
+-- 
+Erika Musterfrau
+Tel 030 1234567
+Musterstraße 1, 12345 Musterstadt
+erika@example.org

@@ -1,0 +1,12 @@
+Hi Max,
+
+thanks for the update. Please call Ms Musterfrau on +49 30 1234567 before Friday.
+
+Best regards
+Erika Musterfrau
+
+On 12 March 2024, Max Mustermann <max@example.org> wrote:
+> Dear Ms Musterfrau,
+> the invoice is ready, see https://example.org/rechnung/max@example.org for the copy.
+> Regards
+> Max Mustermann

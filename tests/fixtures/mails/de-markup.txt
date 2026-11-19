@@ -1,0 +1,13 @@
+Hallo Max,
+
+den Entwurf findest du unter [[Max Mustermann]] und die Adresse steht im Link [Max schreiben](mailto:max@example.org).
+Im Code bleibt alles stehen: `max@example.org` und
+
+```
+Max Mustermann <max@example.org>
+```
+
+Schreib an <erika@example.org> oder an erika@example.org #max@example.org
+
+Viele Grüße
+Erika

@@ -13,14 +13,21 @@
       "source": "code-kit",
       "from": "src/ts/pure",
       "modules": [
+        "code-spans",
+        "critic-markup",
         "error-message",
+        "fences",
         "fold-case",
         "i18n",
+        "iban",
         "phone",
+        "pii-detect",
         "placeholder",
         "placeholder-table",
         "recovery-code",
+        "redact",
         "rel-path",
+        "replaceable-spans",
         "rotation",
         "secrets"
       ]
@@ -91,7 +98,8 @@
       "from": "src/testing",
       "modules": [
         "obsidian-mock",
-        "kit-css"
+        "kit-css",
+        "linear-probe"
       ]
     }
   ]

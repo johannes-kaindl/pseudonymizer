@@ -2,8 +2,10 @@ import type { Engine } from "../core/engine";
 import type { MemoryTable } from "../core/memory-table";
 import type { PluginState } from "../core/status";
 import type { ApiError as PseudonymizerApiError, RestoreResult, TransformRequest, TransformResult } from "../vendor/kit/pseudonymizer-source";
-import { findPlaceholders, restorePlaceholders, type RestoreResult as PlaceholderRestore } from "../vendor/kit/placeholder";
-import { tableLookup } from "../vendor/kit/placeholder-table";
+import { findPlaceholders, placeholderIdFromBytes, restorePlaceholders, type RestoreResult as PlaceholderRestore } from "../vendor/kit/placeholder";
+import { tableLookup, type PlaceholderTable } from "../vendor/kit/placeholder-table";
+import { DEFAULT_SETTINGS, type RuleGroup } from "../core/settings";
+import { applyPlan, decisionsOf, planTransform, uniqueCandidates, type Answer, type Applied, type Candidate } from "../core/transform";
 import type { PersistResult, TableChange } from "./table-store";
 
 /** Was die Engine vom Baustein der Gerätedateien braucht (`createTableStore`). */
@@ -15,6 +17,24 @@ export interface TableStorePort {
 const NOT_READY: PseudonymizerApiError = { error: "not-ready", message: "the table is not set up" };
 const LOCKED: PseudonymizerApiError = { error: "locked", message: "the table is locked" };
 
+/** Das Prüffenster (Aufgabe 14) als Stelle, die die Engine ruft, wenn offene Kandidaten da sind und `interactive` gilt: eine Karte je Wert (`uniqueCandidates`), die Antworten nach `candidateKey`;
+ *  ein fehlender Schlüssel gilt als Vorgabe (ersetzen, Besitzer nur aus der Struktur). `null` heißt Abbruch: nichts wird geschrieben. */
+export type ReviewFn = (candidates: Candidate[], ctx: { documentKey: string; title?: string; table: PlaceholderTable }) => Promise<ReadonlyMap<string, Answer> | null>;
+
+/** Was die Engine sonst braucht; alles hat eine Vorgabe, damit Tests nur nennen, was sie prüfen. */
+export interface EngineOptions {
+  /** Die eingeschalteten Regelgruppen, bei jedem Aufruf frisch gelesen (die Einstellungen ändern sich im Betrieb). */
+  rules?: () => Record<RuleGroup, boolean>;
+  /** Das Prüffenster; ohne es wird jeder offene Kandidat `deferred`. */
+  review?: ReviewFn;
+  /** Zufallsbytes für neue Kennungen; Vorgabe `crypto.getRandomValues`. Nur für Tests austauschbar. */
+  random?: (length: number) => Uint8Array;
+}
+
+const deferred = (count: number): PseudonymizerApiError => ({ error: "deferred", message: `${String(count)} value(s) need a decision` });
+const CANCELLED: PseudonymizerApiError = { error: "cancelled", message: "the review was cancelled" };
+const STORAGE_FAILED: PseudonymizerApiError = { error: "storage-failed", message: "the table could not be written" };
+
 /** Das Kit liefert Platzhalter als Objekte mit Fundstelle, der Vertrag (Spec 8.7) nennt die Rohtexte, wie sie im Text standen. */
 function toContract(r: PlaceholderRestore): RestoreResult {
   return { text: r.text, restored: r.restored, unknown: r.unknown.map((p) => p.raw), forgotten: r.forgotten.map((p) => p.raw) };
@@ -25,7 +45,7 @@ function toContract(r: PlaceholderRestore): RestoreResult {
  *  außer eine Tabelle wird in `MemoryTable` eingesetzt (Tests). Meldungen nennen nie einen Text aus der Anfrage. */
 export class PseudonymizerEngine implements Engine {
   /** `store` ist eine Funktion, weil das Plugin den Baustein neu anlegt, wenn der Ordner der Tabelle geändert wird; ohne Baustein bleibt der Zustand, wie er ist. */
-  constructor(private readonly memory: MemoryTable, private readonly store: () => TableStorePort | null = () => null) {}
+  constructor(private readonly memory: MemoryTable, private readonly store: () => TableStorePort | null = () => null, private readonly options: EngineOptions = {}) {}
 
   state(): PluginState { return this.memory.state(); }
 
@@ -40,8 +60,38 @@ export class PseudonymizerEngine implements Engine {
     await this.store()?.refresh();
   }
 
-  transform(_req: TransformRequest): Promise<TransformResult | PseudonymizerApiError> {
-    return Promise.resolve({ ...NOT_READY });
+  /** `transform` (Spec 8.7), ohne Fenster: Zustand prüfen, planen, bei offenen Kandidaten `deferred` (unbeaufsichtigt, oder ohne Prüffenster) oder das Prüffenster fragen, dann neue Einträge in EINEM
+   *  `persist` schreiben und erst danach das Ergebnis liefern. Scheitert das Schreiben, trägt auch die Tabelle im Arbeitsspeicher nichts davon (alles oder nichts, Review-Fokus 5).
+   *  Die Form der Anfrage prüft die API (`api.ts`) vor dem Aufruf; die Engine verlässt sich darauf. */
+  async transform(req: TransformRequest): Promise<TransformResult | PseudonymizerApiError> {
+    const table = this.memory.table();
+    if (table === null) return this.memory.state() === "locked" ? { ...LOCKED } : { ...NOT_READY };
+    const rules = this.options.rules?.() ?? DEFAULT_SETTINGS.rules;
+    const lang = this.memory.language();
+    const plan = planTransform(req, table, decisionsOf(table), rules, lang);
+    const random = this.options.random ?? ((n: number) => crypto.getRandomValues(new Uint8Array(n)));
+    const newId = (): string => placeholderIdFromBytes(random(7)) ?? "";
+    const done = (a: Applied): TransformResult | PseudonymizerApiError => (a.ok ? { parts: a.parts, entities: a.entities, applied: a.applied } : { ...STORAGE_FAILED });
+
+    if (plan.candidates.length === 0) return done(applyPlan(req, plan, table, new Map(), newId, lang));
+
+    // Offene Kandidaten: ohne Erlaubnis zu fragen bleibt alles, wie es ist.
+    const review = this.options.review;
+    if (!req.interactive || review === undefined) return deferred(uniqueCandidates(plan.candidates).length);
+    const answers = await review(uniqueCandidates(plan.candidates), { documentKey: req.documentKey, ...(req.title !== undefined ? { title: req.title } : {}), table });
+    if (answers === null) return { ...CANCELLED };
+
+    // Das Anlegen läuft in der Warteschlange auf dem frischen Stand: hat ein anderer Weg denselben Wert inzwischen angelegt, gilt dessen Kennung.
+    let outcome: Applied | null = null;
+    const res = await this.persist((current) => {
+      outcome = applyPlan(req, plan, current, answers, newId, lang);
+      return outcome.ok ? outcome.table : current;
+    });
+    if (res !== undefined) {
+      if (res.error === "storage-failed") return { ...STORAGE_FAILED };
+      return res.error === "locked" ? { ...LOCKED } : { ...NOT_READY };
+    }
+    return outcome === null ? { ...STORAGE_FAILED } : done(outcome);
   }
 
   restore(text: string, _caller: string): RestoreResult | PseudonymizerApiError {

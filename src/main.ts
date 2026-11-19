@@ -56,7 +56,7 @@ export default class PseudonymizerPlugin extends Plugin {
   /** Die Tabelle im Arbeitsspeicher; die Gerätedateien füllen sie ab Aufgabe 11, bis dahin bleibt sie leer (`not-set-up`). */
   readonly memory = new MemoryTable();
   /** Die Maschine hinter der API (Aufgabe 9: zurücksetzen und erkennen; Aufgabe 11 öffnet und schreibt, Aufgabe 13 pseudonymisiert). */
-  engine: Engine = new PseudonymizerEngine(this.memory, () => this.tableStore);
+  engine: Engine = new PseudonymizerEngine(this.memory, () => this.tableStore, { rules: () => this.settings.rules });
   /** Öffnet, vereinigt und schreibt die Gerätedateien (Aufgabe 11); `null`, solange sich keine Geräte-ID festhalten lässt. */
   tableStore: TableStore | null = null;
   /** Der Schlüssel dieses Geräts im Schlüsselbund; angelegt beim Laden. */
