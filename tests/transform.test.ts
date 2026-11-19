@@ -55,6 +55,28 @@ describe("bekannte Werte", () => {
   });
 });
 
+describe("K2: keep bei längeren bekannten Formen und im Dateinamen (Sicherheits-Lesung Runde 1)", () => {
+  it("K2a: ein längerer bekannter Wert, der einen keep-Wert enthält, ist ein anderer Wert und wird ersetzt; der keep-Wert allein bleibt", () => {
+    const table = must(tableAddEntry(sampleTable(), "q7d2w8n4tz", "organisation"));
+    const withOrg = withValue(table, "q7d2w8n4tz", null, "Max Mustermann GmbH");
+    const r = req([part("a", "Gruss an Max Mustermann GmbH und an Max Mustermann")], { keep: ["Max Mustermann"] });
+    const p = plan(r, withOrg);
+    expect(p.candidates).toEqual([]);
+    expect(known(r, withOrg)[0]).toBe("Gruss an Organisation_q7d2w8n4tz und an Max Mustermann");
+  });
+
+  it("K2b: im Dateinamen gilt ein keep-Wert mit Bindestrich in seiner Dateinamenform: unverändert, kein Kandidat", () => {
+    const r = req([part("a", "Rechnung_max-muster@example.org.pdf", "filename")], { keep: ["max-muster@example.org"] });
+    expect(plan(r).candidates).toEqual([]);
+    expect(known(r)[0]).toBe("Rechnung_max-muster@example.org.pdf");
+  });
+
+  it("K2b: ohne keep ist die Adresse (ab dem letzten Bindestrich) weiter ein Kandidat", () => {
+    const r = req([part("a", "Rechnung_max-muster@example.org.pdf", "filename")]);
+    expect(values(plan(r))).toEqual(["muster@example.org"]);
+  });
+});
+
 describe("keep, Ausnahmeliste und „hier lassen“", () => {
   it("keep des Aufrufers: der Wert bleibt, ohne Kandidaten", () => {
     const r = req([part("a", "Max Mustermann <max@example.org> und Max")], { keep: ["Max Mustermann", "MAX@example.org"] });

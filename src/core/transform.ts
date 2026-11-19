@@ -6,8 +6,11 @@
 //  2. `applyPlan` nimmt die Antworten zu den Kandidaten, legt neue Einträge an (in einer Kopie der Tabelle) und setzt die Texte zusammen.
 //
 // Woher die Fundstellen kommen: die Erkenner aus `pii-detect` (eine Liste mit gleicher Signatur, Spec 8.4 letzter Satz), die bekannten Formen der Tabelle (ganzes Wort), die Werte
-// der `entities` und die `keep`-Werte des Aufrufers (diese nur als Sperre: ein längerer Treffer, der einen Wert der Liste enthält, gewinnt nicht gegen ihn). Sie überlappen sich; der längere gewinnt,
+// der `entities` und die `keep`-Werte des Aufrufers (diese nur als Sperre für genau diese Stelle). Sie überlappen sich; der längere gewinnt,
 // bei Gleichstand der sicherere (`keep` vor bekannt vor Erkenner hoch, mittel, niedrig), angewendet von rechts nach links (`applyEdits` des Kits).
+//
+// Ein längerer Treffer gewinnt auch gegen einen `keep`-Wert, der in ihm steckt (K2a, entschieden): `keep: ["Max Mustermann"]` und eine bekannte Organisation `Max Mustermann GmbH` sind verschiedene Werte, die Organisation wird ersetzt;
+// wer sie behalten will, nimmt sie selbst in `keep`.
 //
 // Was nie ersetzt wird: Code, Link-Ziele, URLs, Tags, Kommentare, Mathe (`replaceable-spans`, nur das Ziel von `mailto:` ist frei, Spec 8.4) und Platzhalter, die schon im Text stehen
 // (ein zweiter Lauf über denselben Text darf „Person“ in `Person_k3x9m2ab7q` nicht als Namen lesen).
@@ -381,6 +384,14 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
     if (lookup(v.field, v.text) !== null) addForm(forms, v.field, v.text, "known");
   }
   for (const k of req.keep ?? []) for (const f of SCAN_FIELDS) addForm(forms, f, k, "keep");
+  // Im Dateinamen trennen `_` und `-` wie ein Leerzeichen (`viewOf`): ein `keep`-Wert mit Bindestrich (`max-muster@example.org`) wäre dort nie zu finden, und sein hinterer Teil würde Kandidat (K2b).
+  // Darum steht er zusätzlich in seiner Dateinamenform als Sperre, wenn die Anfrage einen Dateinamen trägt.
+  if (req.parts.some((p) => p.kind === "filename")) {
+    for (const k of req.keep ?? []) {
+      const asName = k.replace(/[_-]/g, " ");
+      if (asName !== k) for (const f of SCAN_FIELDS) addForm(forms, f, asName, "keep");
+    }
+  }
 
   // Die Werte aus dem Mail-Kopf: Teil der Suche (auch wo kein Erkenner anschlägt) und, wenn unbekannt, offene Kandidaten.
   const entities: PlannedEntity[] = [];
@@ -560,6 +571,18 @@ export function planSelection(value: string, kind: CandidateKind): { req: Transf
     plan: { replacements: new Map(), candidates: [candidate], edits: [edit], entities: [] },
     key: candidateKey(candidate),
   };
+}
+
+/** Gelten die bekannten Stellen des Plans (Werte, die ohne Rückfrage ersetzt werden) auf `table` noch mit demselben Platzhalter? Der Plan entsteht vor dem Prüffenster; kommt währenddessen eine Vergessen-Marke an
+ *  (Sync, Minutentakt), wäre der Name der vergessenen Person sonst durch ihren vergessenen Platzhalter ersetzt, statt als neue Person angeboten zu werden (Sicherheits-Lesung Runde 1, K3). */
+export function knownStillHold(plan: PlanResult, table: PlaceholderTable, lang: "de" | "en" = "de"): boolean {
+  const holds = (field: PlaceholderField | null, value: string, placeholder: string): boolean => {
+    const now = tableFindValue(table, field, value);
+    return now !== undefined && formatPlaceholder(now, lang) === placeholder;
+  };
+  for (const e of plan.edits) if (e.placeholder !== null && !holds(e.field, e.value, e.placeholder)) return false;
+  for (const ent of plan.entities) for (const slot of [ent.name, ent.email]) if (slot !== undefined && !slot.kept && slot.placeholder !== null && !holds(slot.field, slot.value, slot.placeholder)) return false;
+  return true;
 }
 
 /** Setzt die Antworten um: legt in einer Kopie von `base` die neuen Einträge an (die Kennungen kommen aus `newId`) und baut die Texte. Ein Wert, den `base` inzwischen kennt (ein anderer Weg hat ihn

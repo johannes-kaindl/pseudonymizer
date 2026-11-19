@@ -199,6 +199,28 @@ describe("transform: offene Kandidaten", () => {
   });
 });
 
+describe("transform: die Tabelle ändert sich, während das Prüffenster offen ist (K3)", () => {
+  it("kommt eine Vergessen-Marke an, wird nichts geschrieben: deferred mit der Meldung, ohne Klartext; kein neuer Eintrag, die vergessene Person wird nicht durch ihren Platzhalter ersetzt", async () => {
+    let forgotten: unknown = null;
+    const { engine, d, fs } = await ready({
+      review: async () => { forgotten = await d.store.forget(ID_A); return { answers: new Map() }; },
+    });
+    const r = await engine.transform(req([text(`Max ruft an. Rufen Sie ${ERIKA} an.`)], { entities: [{ name: ERIKA }], interactive: true }));
+    expect(forgotten).toMatchObject({ ok: true });
+    expect(r).toEqual({ error: "deferred", message: "the table changed during the review" });
+    expect(JSON.stringify(r)).not.toMatch(/Max|Muster|Erika/);
+    expect(tableFindValue(await reader(fs), null, ERIKA)).toBeUndefined();
+    expect(tableFindValue(d.memory.table() as PlaceholderTable, null, ERIKA)).toBeUndefined();
+  });
+
+  it("ändert sich nichts Verwendetes, läuft alles wie bisher", async () => {
+    const { engine, d } = await ready({ review: accept });
+    const r = okResult(await engine.transform(req([text(`Max ruft an. Rufen Sie ${ERIKA} an.`)], { entities: [{ name: ERIKA }], interactive: true })));
+    expect(r.parts[0]?.value).toContain(`${P}_2`);
+    expect(tableFindValue(d.memory.table() as PlaceholderTable, null, ERIKA)).toBeDefined();
+  });
+});
+
 describe("transform: Zustand und Eingabe", () => {
   it("nicht eingerichtet und gesperrt kommen als Wert zurück, ohne Ausnahme", async () => {
     const memory = new MemoryTable();

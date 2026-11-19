@@ -5,7 +5,7 @@ import type { ApiError as PseudonymizerApiError, RestoreResult, TransformRequest
 import { findPlaceholders, placeholderIdFromBytes, restorePlaceholders, type RestoreResult as PlaceholderRestore } from "../vendor/kit/placeholder";
 import { tableLookup, type PlaceholderTable } from "../vendor/kit/placeholder-table";
 import { DEFAULT_SETTINGS, type RuleGroup } from "../core/settings";
-import { applyPlan, decisionsOf, planTransform, uniqueCandidates, withMarks, markCandidates, type Answer, type Applied, type Candidate, type Mark, type PlanResult } from "../core/transform";
+import { applyPlan, decisionsOf, knownStillHold, planTransform, uniqueCandidates, withMarks, markCandidates, type Answer, type Applied, type Candidate, type Mark, type PlanResult } from "../core/transform";
 import type { PlaceRef, ReviewPart } from "../core/review-model";
 import type { PersistResult, TableChange } from "./table-store";
 
@@ -64,6 +64,7 @@ function knownOf(plan: PlanResult): KnownValue[] {
 }
 
 const deferred = (count: number): PseudonymizerApiError => ({ error: "deferred", message: `${String(count)} value(s) need a decision` });
+const TABLE_CHANGED: PseudonymizerApiError = { error: "deferred", message: "the table changed during the review" };
 const CANCELLED: PseudonymizerApiError = { error: "cancelled", message: "the review was cancelled" };
 const STORAGE_FAILED: PseudonymizerApiError = { error: "storage-failed", message: "the table could not be written" };
 
@@ -127,10 +128,14 @@ export class PseudonymizerEngine implements Engine {
 
     // Das Anlegen läuft in der Warteschlange auf dem frischen Stand: hat ein anderer Weg denselben Wert inzwischen angelegt, gilt dessen Kennung.
     let outcome: Applied | null = null;
+    let changedMeanwhile = false;
     const res = await this.persist((current) => {
+      // Die bekannten Stellen kommen aus dem Plan vor dem Fenster: hat sich ein verwendeter Eintrag inzwischen geändert (vergessen, verschwunden), wird nichts geschrieben (K3).
+      if (!knownStillHold(full, current, lang)) { changedMeanwhile = true; return current; }
       outcome = applyPlan(req, full, current, answers, newId, lang);
       return outcome.ok ? outcome.table : current;
     });
+    if (changedMeanwhile) return { ...TABLE_CHANGED };
     if (res !== undefined) {
       if (res.error === "storage-failed") return { ...STORAGE_FAILED };
       return res.error === "locked" ? { ...LOCKED } : { ...NOT_READY };
