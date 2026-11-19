@@ -1,6 +1,6 @@
 /**
  * GUI-Smoke — fährt die Prüfpunkte aus docs/SMOKE.md gegen ein LAUFENDES Obsidian (CORE-TEST-02 b).
- * Stand: Aufgabe 17 (Live Preview, Punkte LP1 bis LP8, geschrieben, nicht gelaufen); davor Aufgabe 12 Teil b. Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
+ * Stand: gebündelter Lauf der Aufgaben 14 bis 18 am 2026-11-19 (52 Punkte, grün; Gegenprobe 52 rot, `docs/SMOKE.md` § Runs). Fehlersuche: `--stop-nach <Punkt>` hält den Treiber nach einem Punkt an (weiter mit `touch /tmp/pseu-weiter`). Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
  * die Gerätedateien: Einrichten (Abbruch, Kontrollkästchen, Datei und Schlüssel), eine fremde Fassung im Ordner, den Reiter „Geräte und Schlüssel“,
  * die Sperre nach gelöschtem Schlüssel und die Code-Eingabe, dazu (Teil b) „Trotzdem einrichten“, Schlüssel ersetzen, Person vergessen (die Gerätedatei auf der Platte
  * wird mit dem Schlüssel im Treiber geöffnet und auf Klartext geprüft) und Gerät entfernen; seit Aufgabe 16 die Lesesicht (Einblenden, Umschalter, Sperren, Vergessen, Kopieren, Kopier-Befehle, Popout, Zug mit der Maus, PDF-Export). Live Preview folgt mit Aufgabe 17.
@@ -64,7 +64,7 @@ const PUNKTE = [
   "M Befehle „Mit Klartext kopieren“ und „Mit Platzhaltern kopieren“: Auswahl und ganze Notiz in der Zwischenablage, ein unlesbarer Platzhalter hält alles zurück und steht (ohne Klartext) in der Notice",
   "N Sperren und Entsperren schalten gezeigte Stellen ohne Neuöffnen um: gesperrt nicht lesbar mit Grund und ohne Klartext im DOM, entsperrt wieder Klartext",
   "O Popout-Fenster: Umschalter und Kopieren wirken auch im eigenen document des Popouts",
-  "Q Ziehen markierten Texts aus der Lesesicht (echter Mauszug, Input.setInterceptDrags): der Zug trägt in der Vorgabe den Platzhalter, nie den Klartext",
+  "Q Ziehen markierten Texts aus der Lesesicht (dragstart mit vorgefülltem DataTransfer; ein echter Mauszug beginnt über CDP keinen Zug aus Text): der Zug trägt in der Vorgabe den Platzhalter, nie den Klartext",
   "P PDF-Export (Speicherdialog im Renderer ersetzt): mit „Klartext zeigen“ trägt das PDF den Klartext und nicht den Platzhalter, ohne den Platzhalter und nicht den Klartext",
   "LP1 Live Preview: Platzhalter mitten in der Zeile als Widget mit Klartext (gepunktete Linie, der Platzhalter im Tooltip und im Attribut), nicht lesbare gestrichelt, Unbekanntes bleibt Text, kein Attribut trägt Klartext",
   "LP2 Cursor oder Auswahl auf dem Platzhalter zeigt den Platzhalter (die beiden anderen Stellen der Zeile bleiben Widgets); weg vom Platzhalter kommt das Widget zurück",
@@ -99,7 +99,19 @@ const PUNKTE = [
 ] as const;
 
 const bilanz = createBilanz({ punkte: PUNKTE });
-const { record } = bilanz;
+// Fehlersuche: `--stop-nach <Punkt>` hält den Treiber nach diesem Punkt an, bis die Datei `$PSEU_WEITER` (Standard /tmp/pseu-weiter) existiert, damit man den Zustand der Instanz ansehen kann.
+let stopNach: string | null = null;
+function haltepunkt(): void {
+  const datei = process.env.PSEU_WEITER ?? "/tmp/pseu-weiter";
+  console.log(`  (angehalten, weiter mit: touch ${datei})`);
+  const schlaf = new Int32Array(new SharedArrayBuffer(4));
+  for (let i = 0; i < 2400 && !existsSync(datei); i++) Atomics.wait(schlaf, 0, 0, 500);
+  rmSync(datei, { force: true });
+}
+const record = (name: (typeof PUNKTE)[number], passed: boolean, detail?: string): void => {
+  bilanz.record(name, passed, detail);
+  if (stopNach !== null && name.split(" ")[0] === stopNach) haltepunkt();
+};
 const q = (s: unknown): string => JSON.stringify(s);
 const P = `app.plugins.plugins[${q(PLUGIN_ID)}]`;
 
@@ -187,6 +199,7 @@ interface FremdePerson { id: string; name: string; mail?: string; telefon?: stri
 
 /** Die Personen der fremden Fassung nach H: Max mit Mail und Telefon, dazu Berta (alles erfunden). */
 const FREMD2_ID = "q7d2w8n4tz";
+const FREMD2_PLATZHALTER = `Person_${FREMD2_ID}`;
 const PERSONEN: FremdePerson[] = [
   { id: FREMD_ID, name: "Max Mustermann", mail: "max@example.org", telefon: "030 1234567" },
   { id: FREMD2_ID, name: "Berta Beispiel" },
@@ -324,8 +337,10 @@ const BLATT = (pfad: string): string => `app.workspace.getLeavesOfType("markdown
 
 /** Was die Lesesicht einer Notiz gerade zeigt: jede Ersatz-Stelle mit Zustand, Tooltip und berechneter Linie, dazu, ob Klartext außerhalb von Ersatz-Stellen oder in einem Attribut steht. */
 const LESESTAND = (pfad: string): string => `
-  const c = ${WURZEL(pfad)};
-  if (!c) return null;
+  const wurzel = ${WURZEL(pfad)};
+  if (!wurzel) return null;
+  // Das Blatt hält auch den versteckten Editor (Widgets mit Klartext, andere Klasse): gelesen wird nur die Lesesicht.
+  const c = wurzel.querySelector(".markdown-preview-view") || wurzel;
   const re = ${KLARTEXT_JS};
   const stellen = Array.from(c.querySelectorAll(".okit-swap")).map((e) => ({
     text: e.textContent, shown: e.classList.contains("is-shown"), forgotten: e.classList.contains("is-forgotten"), unreadable: e.classList.contains("is-unreadable"),
@@ -388,40 +403,27 @@ const SCHALTER_ZURUECK = `
   return true;
 `;
 
-/** Ein echter Mauszug über die Auswahl (Input.setInterceptDrags): liefert die Daten, die der Zug trägt, oder `null`, wenn kein Zug abgefangen wurde. */
+/** Der Zug markierten Texts aus der Lesesicht: ein `dragstart` mit einem `DataTransfer`, den der Treiber wie Chrome vorher mit der gezeigten Auswahl füllt (Klartext, text/plain und text/html); das Plugin
+ *  ersetzt die Daten wie beim Kopieren. Liefert die Daten, die der Zug danach trägt. Warum nicht der echte Mauszug (`Input.setInterceptDrags`, Mausdruck, Bewegung): gemessen am 2026-11-19 (Obsidian 1.15.1,
+ *  Zweitinstanz) beginnt über CDP kein Zug aus markiertem Text, weder in der Lesesicht noch in einem schlichten `div` außerhalb von Obsidian (ein `draggable`-Element löst `dragIntercepted` aus), die Maus
+ *  beginnt stattdessen eine neue Auswahl. Der echte Zug bleibt Handprobe; gemessen wird hier der Handler des Plugins. */
 async function messeZiehen(cdp: Cdp, pfad: string): Promise<{ items: { mimeType: string; data: string }[] } | null> {
-  let items: { mimeType: string; data: string }[] | null = null;
-  cdp.on("Input.dragIntercepted", (params) => {
-    const d = (params as { data?: { items?: { mimeType: string; data: string }[] } }).data;
-    items = d?.items ?? [];
-  });
-  const box = await cdp.evaluate<{ x: number; y: number } | null>(`
+  return cdp.evaluate<{ items: { mimeType: string; data: string }[] } | null>(`
     app.workspace.setActiveLeaf(${BLATT(pfad)}, { focus: true });
-    const p = ${WURZEL(pfad)}.querySelectorAll("p")[0];
-    p.scrollIntoView({ block: "center" });
+    const p = ${WURZEL(pfad)}.querySelector(".markdown-preview-view p");
+    if (!p) return null;
+    const ziel = p.querySelector(".okit-swap") || p;
     const r = document.createRange(); r.selectNodeContents(p);
     const sel = document.getSelection(); sel.removeAllRanges(); sel.addRange(r);
-    const b = p.querySelector(".okit-swap").getBoundingClientRect();
-    return b.width === 0 ? null : { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+    const dt = new DataTransfer();
+    // Wie Chrome vor dem Ereignis: die gezeigte Auswahl, mit eingeblendetem Klartext.
+    const frag = r.cloneContents(); const div = document.createElement("div"); div.appendChild(frag);
+    dt.setData("text/plain", sel.toString());
+    dt.setData("text/html", div.innerHTML);
+    const ev = new DragEvent("dragstart", { dataTransfer: dt, bubbles: true, cancelable: true });
+    ziel.dispatchEvent(ev);
+    return { items: Array.from(dt.types).map((t) => ({ mimeType: t, data: dt.getData(t) })) };
   `);
-  if (!box) return null;
-  try {
-    await cdp.send("Input.setInterceptDrags", { enabled: true });
-    const c = { x: box.x, y: box.y, button: "left", clickCount: 1 };
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...c, buttons: 0 });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...c, buttons: 1 });
-    for (let i = 1; i <= 6 && items === null; i++) {
-      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...c, x: box.x + i * 8, y: box.y + i * 3, buttons: 1 });
-      await new Promise((r) => setTimeout(r, 120));
-    }
-    for (let i = 0; i < 20 && items === null; i++) await new Promise((r) => setTimeout(r, 150));
-    // Der abgefangene Zug wird abgebrochen, nichts wird fallen gelassen.
-    await cdp.send("Input.dispatchDragEvent", { type: "dragCancel", x: box.x, y: box.y, data: { items: [], dragOperationsMask: 1 } });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...c, x: box.x, y: box.y, buttons: 0 });
-  } finally {
-    await cdp.send("Input.setInterceptDrags", { enabled: false });
-  }
-  return items === null ? null : { items };
 }
 
 /** Obsidians PDF-Export einer geöffneten Notiz in eine Datei: der native Speicherdialog hält eine Zweitinstanz fest und lässt sich per CDP nicht bedienen, also ersetzt der Treiber
@@ -442,9 +444,9 @@ async function exportiereAlsPdf(cdp: Cdp, pfad: string, ziel: string): Promise<{
     app.commands.executeCommandById("workspace:export-pdf");
     return true;
   `);
-  const dialog = await pollUntil<boolean>(cdp, `return (${MODAL_BTN("Export")}) ? true : null;`, 8000, 250);
+  const dialog = await pollUntil<boolean>(cdp, `return (${MODAL_BTN("Export to PDF")}) ? true : null;`, 8000, 250);
   if (!dialog) return { ok: false, grund: "der Export-Dialog kam nicht" };
-  if (!(await klickeKnopf(cdp, "Export"))) return { ok: false, grund: "Export nicht anklickbar" };
+  if (!(await klickeKnopf(cdp, "Export to PDF"))) return { ok: false, grund: "Export nicht anklickbar" };
   for (let i = 0; i < 120; i++) {
     if (existsSync(ziel) && statSync(ziel).size > 1000) return { ok: true, grund: "" };
     await new Promise((r) => setTimeout(r, 250));
@@ -524,7 +526,8 @@ const PRUEF_ANFRAGE = (text: string, schluessel: string, interaktiv: boolean, ti
   caller: "gui-smoke", documentKey: schluessel, interactive: interaktiv, ...(titel !== undefined ? { title: titel } : {}), parts: [{ id: "a", kind: "text", value: text }],
 });
 /** Erfundene Texte; die Namen und Nummern sind keine echten. */
-const PRUEF_TEXT = "Hallo Erika Musterfrau,\nTel 030 7654321.\nBis bald, Hallo Erika Musterfrau,";
+// Der Kit-Erkenner liest eine Anrede nur am Zeilenanfang: beide Stellen des Namens stehen deshalb am Zeilenanfang (gemessen im ersten Lauf: „Bis bald, Hallo …“ gab nur eine Stelle).
+const PRUEF_TEXT = "Hallo Erika Musterfrau,\nTel 030 7654321.\nHallo Erika Musterfrau, bis bald.";
 const PRUEF_NOTIZ = "Hallo Gustav Probe,\nDie Kollegin Schmidt schrieb. Schmidt ruft an, Schmidtke nicht.";
 
 function dateiHash(basePath: string, eigeneId: string): string | null {
@@ -608,6 +611,9 @@ const WAEHLE_ZEILEN = (pfad: string, von: number, bis: number): string => `
   const ed = leaf.view.editor;
   app.workspace.setActiveLeaf(leaf, { focus: true });
   ed.setSelection({ line: ${String(von)}, ch: 0 }, { line: ${String(bis)}, ch: ed.getLine(${String(bis)}).length });
+  // CodeMirrors eigenes Kopieren verlangt eine Auswahl im DOM (nicht nur im Editor-Zustand); sie folgt erst nach dem Fokus und einem Bild (gemessen: der erste Versuch ohne Pause lieferte nichts).
+  if (ed.cm && ed.cm.focus) ed.cm.focus();
+  await new Promise((r) => setTimeout(r, 400));
   return ed.getSelection();
 `;
 /** Setzt den Cursor auf Zeile `zeile`, Spalte `spalte` (0-basiert). */
@@ -653,6 +659,7 @@ async function main(): Promise<void> {
   if (!portArg || !Number.isInteger(Number(portArg))) throw new Error("--port <Port> ist Pflicht (Zweitinstanz) — kein Standardport.");
   const port = Number(portArg);
   const gegenprobe = args.has("ohne-plugin");
+  stopNach = args.value("stop-nach") ?? null;
 
   console.log(`GUI-Smoke pseudonymizer — Obsidian auf Port ${port}${gegenprobe ? " (GEGENPROBE: Plugin aus)" : ""}`);
   const cdp = await attachTo("workspace", port, REPO_NAME);
@@ -1000,8 +1007,10 @@ async function main(): Promise<void> {
     const rest = lesenOffen ? await cdp.evaluate<{ code: string | null; pre: string | null; href: string | null; aTitle: string | null; src: string | null; alt: string | null; imgTitle: string | null; imCode: number; ohneErsatz: boolean } | null>(`
       const c = ${WURZEL(NOTIZ_LESEN)};
       if (!c) return null;
-      const a = c.querySelector("a.external-link, a[href^='http']");
-      const img = c.querySelector("img");
+      // Der Container trägt auch den (versteckten) Editor mit leeren cm-widgetBuffer-Bildern; das Bild der Lesesicht steht in .markdown-preview-view und hat ein src.
+      const pv = c.querySelector(".markdown-preview-view") || c;
+      const a = pv.querySelector("a.external-link, a[href^='http']");
+      const img = pv.querySelector("img[src]");
       const code = c.querySelector("p code");
       const pre = c.querySelector("pre");
       return {
@@ -1189,9 +1198,9 @@ async function main(): Promise<void> {
     await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LESEN)}, { focus: true }); return true;`);
     const zug = lesenOffen ? await messeZiehen(cdp, NOTIZ_LESEN) : null;
     const zugText = zug ? zug.items.find((i) => i.mimeType === "text/plain")?.data ?? null : null;
-    record("Q Ziehen markierten Texts aus der Lesesicht (echter Mauszug, Input.setInterceptDrags): der Zug trägt in der Vorgabe den Platzhalter, nie den Klartext",
+    record("Q Ziehen markierten Texts aus der Lesesicht (dragstart mit vorgefülltem DataTransfer; ein echter Mauszug beginnt über CDP keinen Zug aus Text): der Zug trägt in der Vorgabe den Platzhalter, nie den Klartext",
       zug !== null && zugText !== null && zugText.includes(MAX) && !zug.items.some((i) => KLARTEXT.test(i.data)),
-      `Zug abgefangen=${zug !== null}, Daten=${q(zug ? zug.items.map((i) => ({ art: i.mimeType, anfang: i.data.slice(0, 60) })) : null)}${zug !== null && zug.items.some((i) => KLARTEXT.test(i.data)) ? " — KLARTEXT IM ZUG: Grenze für die README" : ""}`);
+      `Zug ausgelöst=${zug !== null}, Daten=${q(zug ? zug.items.map((i) => ({ art: i.mimeType, anfang: i.data.slice(0, 60) })) : null)}${zug !== null && zug.items.some((i) => KLARTEXT.test(i.data)) ? " — KLARTEXT IM ZUG: Grenze für die README" : ""}`);
     await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LESEN)}, { focus: true }); return true;`);
 
     // --- P ---
@@ -1214,6 +1223,8 @@ async function main(): Promise<void> {
     } finally {
       await cdp.evaluate(`if (window.__pseuSaveOrig) { window.require("electron").remote.dialog.showSaveDialog = window.__pseuSaveOrig; delete window.__pseuSaveOrig; } return true;`);
       await cdp.evaluate(SCHALTER_ZURUECK);
+      // Ein Export-Dialog, der offen blieb (Knopf nicht gefunden), würde die folgenden Punkte verdecken.
+      await schliesseDialog(cdp);
       rmSync(pdfOrdner, { recursive: true, force: true });
     }
     const glatt = (t: string | null): string => (t ?? "").replace(/\s+/g, " ");
@@ -1425,12 +1436,17 @@ async function main(): Promise<void> {
 
     // --- J ---
     console.log("\nJ · Vergessen in der offenen Lesesicht");
+    // Ein Blatt im Hintergrund baut seine Lesesicht ab (gemessen im Lauf 2: kein einziger Platzhalter-Knoten im DOM des Blatts); es wird erst wieder gezeichnet, wenn es nach vorn kommt.
+    await cdp.evaluate(`app.workspace.setActiveLeaf(${BLATT(NOTIZ_LESEN)}, { focus: true }); return true;`);
     const nachVergessen = lesenOffen ? await pollUntil<Lesestand>(cdp, `
       const st = (() => { ${LESESTAND(NOTIZ_LESEN)} })();
       if (!st) return null;
       const max = st.stellen.filter((x) => x.raw.toLowerCase().startsWith(${q(MAX.toLowerCase())}));
       return max.length >= 7 && max.every((x) => x.forgotten) ? st : null;
     `, 20_000, 300) : null;
+    // Bei einem Zeitablauf den letzten Stand lesen, damit ein Rot sagt, was im DOM stand.
+    const letzterStand = nachVergessen ?? (lesenOffen ? await cdp.evaluate<Lesestand | null>(LESESTAND(NOTIZ_LESEN)) : null);
+    if (!nachVergessen && letzterStand) console.log(`  (J letzter Stand: ${q(letzterStand.stellen.map((x) => ({ raw: x.raw, text: x.text, vergessen: x.forgotten, unlesbar: x.unreadable })))})`);
     const maxStellen = nachVergessen ? nachVergessen.stellen.filter((x) => x.raw.toLowerCase().startsWith(MAX.toLowerCase())) : [];
     const bertaStelle = nachVergessen ? nachVergessen.stellen.filter((x) => x.raw === `Person_${FREMD2_ID}`) : [];
     record("J Vergessen in der offenen Lesesicht: die Stellen der vergessenen Person schalten ohne Neuöffnen auf „vergessen“ (Klasse, Tooltip, kein Klartext im DOM), die der anderen Person bleiben lesbar",
@@ -1464,10 +1480,10 @@ async function main(): Promise<void> {
     console.log("\nB · Prüffenster");
     // Der transform läuft im Renderer und bleibt offen, bis das Fenster antwortet; der Treiber hält das Versprechen in `window` und holt es nach dem Klick.
     const starteB = (text: string, schluessel: string, titel?: string): Promise<boolean> =>
-      cdp.evaluate<boolean>(`window.__pseuB = ${P}.api.transform(${PRUEF_ANFRAGE(text, schluessel, true, titel)}); return true;`);
+      cdp.evaluate<boolean>(`const p = ${P}; if (!p) return false; window.__pseuB = p.api.transform(${PRUEF_ANFRAGE(text, schluessel, true, titel)}); return true;`);
     const holeB = (): Promise<unknown> => cdp.evaluate<unknown>(`return await window.__pseuB;`);
     const unbeaufsichtigt = (text: string, schluessel: string): Promise<unknown> =>
-      cdp.evaluate<unknown>(`return await ${P}.api.transform(${PRUEF_ANFRAGE(text, schluessel, false)});`);
+      cdp.evaluate<unknown>(`const p = ${P}; return p ? await p.api.transform(${PRUEF_ANFRAGE(text, schluessel, false)}) : null;`);
     const bilderDir = mkdtempSync(join(tmpdir(), "pseu-pruef-"));
     const fensterVorher = await cdp.evaluate<number[]>(`return window.require("electron").remote.getCurrentWindow().getSize();`);
     await setWindowSize(cdp, 1200, 800);
@@ -1553,7 +1569,7 @@ async function main(): Promise<void> {
     const anderesDokument = await unbeaufsichtigt("Hallo Erika Musterfrau,", "smoke-pruef-2") as { error?: string };
     record("B3 Wege und übernehmen: „Hier lassen“ lässt den Namen stehen und gilt nur für denselben documentKey, die Nummer wird ersetzt und steht in der Gerätedatei auf der Platte (mit dem Schlüssel geöffnet), die Platte änderte sich erst mit „übernehmen“",
       Boolean(b3offen) && b3weg && Boolean(b3zahl) && vorApply === vorB2 && b3apply
-        && /^Hallo Erika Musterfrau,\nTel Telefon_[0-9a-z]{10}\.\nBis bald, Hallo Erika Musterfrau,$/.test(b3wert)
+        && /^Hallo Erika Musterfrau,\nTel Phone_[0-9a-z]{10}\.\nHallo Erika Musterfrau, bis bald\.$/.test(b3wert)
         && nachApply !== null && nachApply !== vorB2 && dateiB !== null && dateiB.tabelle.includes("030 7654321")
         && gleichesDokument.parts?.[0]?.value === "Hallo Erika Musterfrau," && anderesDokument.error === "deferred",
       `Weg gesetzt=${b3weg}, Knopf=${q(b3zahl)}, Platte vor „übernehmen“ unverändert=${vorApply === vorB2}, Ergebnis=${q(b3wert)}, Platte danach geändert=${nachApply !== vorB2}, Nummer in der Datei=${dateiB?.tabelle.includes("030 7654321") ?? null}, gleicher Schlüssel unbeaufsichtigt=${q(gleichesDokument)}, anderer=${q(anderesDokument)}`);
@@ -1606,7 +1622,7 @@ async function main(): Promise<void> {
     const schluesselNA = await leseSchluessel(cdp);
     const erkennbar = (id: string): string => `Hallo, ${id} schrieb gestern.\n`;
     const restoreVon = (text: string): Promise<{ text?: string; error?: string } | null> =>
-      cdp.evaluate(`return ${P}.api.restore(${q(text)}, { caller: "gui-smoke" });`);
+      cdp.evaluate(`const p = ${P}; return p ? p.api.restore(${q(text)}, { caller: "gui-smoke" }) : null;`);
 
     // NA1 und NA2: dieselbe Abfolge im Quelltext und in Live Preview
     const auswahlLauf = async (pfad: string, quelltext: boolean): Promise<{ ok: boolean; detail: string }> => {
@@ -1654,7 +1670,7 @@ async function main(): Promise<void> {
     const na3text = na3apply ? await pollUntil<string>(cdp, PLATTE_GEAENDERT(NOTIZ, "Berta Beispiel <"), 10_000, 250) : null;
     await new Promise((r) => setTimeout(r, 2500));
     const modifys = await cdp.evaluate<number>(`app.vault.offref(window.__pseuModRef); return window.__pseuMod;`);
-    const na3 = na3text === null ? null : /^---\nfrom: Person_m4t8c6r2vp <(Mail_[0-9a-z]{10})>\nup: "\[\[Berta Beispiel\]\]"\ncc:\n {2}- Person_m4t8c6r2vp\n---\nHallo Person_m4t8c6r2vp, schreib an (Mail_[0-9a-z]{10})\.\n$/.exec(na3text);
+    const na3 = na3text === null ? null : new RegExp(`^---\\nfrom: ${FREMD2_PLATZHALTER} <(Mail_[0-9a-z]{10})>\\nup: "\\[\\[Berta Beispiel\\]\\]"\\ncc:\\n {2}- ${FREMD2_PLATZHALTER}\\n---\\nHallo ${FREMD2_PLATZHALTER}, schreib an (Mail_[0-9a-z]{10})\\.\\n$`).exec(na3text);
     record("NA3 Diese Notiz pseudonymisieren mit Prüffenster und „übernehmen“: Frontmatter und Text in genau einem Schreibvorgang der Notiz, die Eigenschaft up mit dem Wikilink bleibt byte-gleich, from und cc ungequotet mit den Platzhaltern, kein Klartext mehr in der Notiz",
       Boolean(na3offen) && Boolean(na3fenster) && na3apply && na3 !== null && na3[1] === na3[2] && modifys === 1 && !/Berta Beispiel|berta@/i.test((na3text ?? "").replace('up: "[[Berta Beispiel]]"', "")),
       `Fenster=${Boolean(na3fenster)}, Notiz danach=${q(na3text)}, modify-Ereignisse=${modifys}`);
@@ -1667,19 +1683,21 @@ async function main(): Promise<void> {
       const c = ${WURZEL(NOTIZ)};
       const f = c ? c.querySelector('.metadata-property[data-property-key="from"]') : null;
       if (!f) return null;
-      const feld = f.querySelector(".metadata-input-longtext, input, .metadata-property-value");
+      const feld = f.querySelector(".metadata-property-value .metadata-input-longtext, .metadata-property-value input, .metadata-property-value");
       const cc = Array.from(c.querySelectorAll('.metadata-property[data-property-key="cc"] .multi-select-pill-content')).map((e) => e.textContent.trim());
       return { from: feld ? (feld.value !== undefined && feld.value !== "" ? feld.value : feld.textContent.trim()) : "", cc };
     `, 10_000, 250) : null;
     const dateiFrom = /^from: (.*)$/m.exec(na3text ?? "")?.[1] ?? "<fehlt>";
     record("NA4 Der Eigenschaften-Bereich zeigt den Wert von from und den Listeneintrag von cc zeichengleich zur Datei",
-      eigenschaften !== null && eigenschaften.from === dateiFrom && eigenschaften.cc.length === 1 && eigenschaften.cc[0] === "Person_m4t8c6r2vp",
+      eigenschaften !== null && eigenschaften.from === dateiFrom && eigenschaften.cc.length === 1 && eigenschaften.cc[0] === FREMD2_PLATZHALTER,
       `Datei: from=${q(dateiFrom)}; Eigenschaften-Bereich: ${q(eigenschaften)}`);
     await cdp.evaluate(SCHLIESSE_NOTIZEN);
 
     // NA5: Abbruch im Prüffenster
     const ABBRUCH = "Smoke-Abbruch.md";
-    await cdp.evaluate(LEGE_NOTIZ_AN(ABBRUCH, NA_NOTIZ));
+    // Nach NA3 kennt die Tabelle Berta und ihre Adresse; eine andere, noch unbekannte Adresse bringt das Prüffenster wieder.
+    const NA5_NOTIZ = NA_NOTIZ.replaceAll("berta@example.org", "berta.neu@example.org");
+    await cdp.evaluate(LEGE_NOTIZ_AN(ABBRUCH, NA5_NOTIZ));
     const na5offen = await oeffneNotiz(cdp, ABBRUCH, "preview", 0);
     await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:pseudonymize-note`)}); return true;`);
     const na5fenster = na5offen ? await pollUntil<boolean>(cdp, `return document.querySelector(".modal.pseu-review-modal") ? true : null;`, 10_000, 250) : null;
@@ -1687,8 +1705,8 @@ async function main(): Promise<void> {
     const na5notice = na5abbruch ? await pollUntil<string>(cdp, NOTICE_MIT("Cancelled"), 5000, 200) : null;
     const na5platte = await cdp.evaluate<string | null>(PLATTE_TEXT(ABBRUCH));
     record("NA5 Diese Notiz pseudonymisieren, im Prüffenster abgebrochen: die Notiz ist byte-gleich, die Notice nennt den Abbruch ohne Klartext",
-      Boolean(na5fenster) && na5abbruch && na5platte === NA_NOTIZ && na5notice !== null && !/Berta|berta@/i.test(na5notice),
-      `Fenster=${Boolean(na5fenster)}, Notiz gleich=${na5platte === NA_NOTIZ}, Notice=${q(na5notice)}`);
+      Boolean(na5fenster) && na5abbruch && na5platte === NA5_NOTIZ && na5notice !== null && !/Berta|berta@/i.test(na5notice),
+      `Fenster=${Boolean(na5fenster)}, Notiz gleich=${na5platte === NA5_NOTIZ}, Notice=${q(na5notice)}`);
     await clearNotices(cdp);
     await cdp.evaluate(SCHLIESSE_NOTIZEN);
 
@@ -1720,17 +1738,18 @@ async function main(): Promise<void> {
       return c && c.frontmatter ? { from: c.frontmatter.from, title: c.frontmatter.title, people: c.frontmatter.people, author: c.frontmatter.author } : null;
     `, 8000, 200) : null;
     await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:pseudonymize-note`)}); return true;`);
-    const na7fenster = na7offen ? await pollUntil<boolean>(cdp, `return document.querySelector(".modal.pseu-review-modal") ? true : null;`, 10_000, 250) : null;
+    // Nach NA3 kennt die Tabelle Berta und ihre Adresse: gibt es nichts Neues zu fragen, schreibt der Befehl ohne Prüffenster; kommt eines, wird es bestätigt.
+    const na7fenster = na7offen ? await pollUntil<boolean>(cdp, `return document.querySelector(".modal.pseu-review-modal") ? true : null;`, 4000, 250) : null;
     const na7apply = na7fenster ? await clickReal(cdp, LETZTER_KNOPF) : false;
-    const na7text = na7apply ? await pollUntil<string>(cdp, PLATTE_GEAENDERT(NA7, "Hallo Berta Beispiel, schreib"), 10_000, 250) : null;
+    const na7text = na7offen ? await pollUntil<string>(cdp, PLATTE_GEAENDERT(NA7, "Hallo Berta Beispiel, schreib"), 10_000, 250) : null;
     const na7notice = na7text !== null ? await pollUntil<string>(cdp, NOTICE_MIT("left unchanged"), 5000, 200) : null;
     const na7zeilen = ["title: Berta Beispiel", "  und Erika Musterfrau", "people:", "  - name: Berta Beispiel", "    role: Kassenwart", "  - Erika", "author: Berta Beispiel # Chefin"];
     const na7behalten = na7text !== null && na7zeilen.every((z) => (na7text as string).split("\n").includes(z));
     record("NA7 Eigenschaften, die der Kit-Leser nicht ganz liest (Fortsetzungszeile, Liste von Abbildungen, Kommentar im Wert): der metadataCache von Obsidian liefert für die flachen Werte genau den gelesenen Wert und für die anderen etwas anderes, der Befehl lässt diese byte-gleich und meldet ihre Namen, Frontmatter-Zeilen gehen nicht verloren, der Rest wird pseudonymisiert",
       Boolean(na7cache) && na7cache!.from === "Berta Beispiel <berta@example.org>" && na7cache!.title !== "Berta Beispiel" && JSON.stringify(na7cache!.people) !== JSON.stringify(["Berta Beispiel", "Erika"])
-        && na7cache!.author !== "Berta Beispiel # Chefin" && na7apply && na7text !== null && na7behalten && !/^from: Berta/m.test(na7text as string) && !/\nHallo Berta Beispiel/.test(na7text as string)
+        && na7cache!.author !== "Berta Beispiel # Chefin" && na7text !== null && na7behalten && !/^from: Berta/m.test(na7text as string) && !/\nHallo Berta Beispiel/.test(na7text as string)
         && na7notice !== null && /title/.test(na7notice) && /people/.test(na7notice) && !/Berta|Erika/.test(na7notice),
-      `Cache=${q(na7cache)}, Notiz danach=${q(na7text)}, Notice=${q(na7notice)}`);
+      `Cache=${q(na7cache)}, Prüffenster=${Boolean(na7fenster)}, Notiz danach=${q(na7text)}, Notice=${q(na7notice)}`);
     await clearNotices(cdp);
     await cdp.evaluate(SCHLIESSE_NOTIZEN);
     await cdp.evaluate(LOESCHE_SMOKE_NOTIZEN);
@@ -1741,7 +1760,8 @@ async function main(): Promise<void> {
     console.log("\nAP · Personen und Ausnahmen");
     await setWindowSize(cdp, 1200, 800);
     const PANEL = (n: number): string => `document.querySelectorAll(".pseu-root .pseu-panel")[${n}]`;
-    const ZEIGE_REITER = (id: string): string => `app.commands.executeCommandById(${q(`${PLUGIN_ID}:open-view`)}); const l = app.workspace.getLeavesOfType("pseudonymizer-view")[0]; if (l && l.view.showTab) l.view.showTab(${q(id)}); return true;`;
+    // Der Befehl `open-view` stellt die Ansicht (asynchron) auf den ersten Reiter zurück; ein `showTab` davor geht verloren (gemessen im Lauf 3: Ausnahmen und Geräte blieben unsichtbar, `clickReal` fand die Fläche 0×0). Deshalb erst warten, dann wählen.
+    const ZEIGE_REITER = (id: string): string => `app.commands.executeCommandById(${q(`${PLUGIN_ID}:open-view`)}); await new Promise((r) => setTimeout(r, 600)); const l = app.workspace.getLeavesOfType("pseudonymizer-view")[0]; if (l && l.view.showTab) l.view.showTab(${q(id)}); await new Promise((r) => setTimeout(r, 300)); return true;`;
     interface PersonenListe { items: { label: string; meta: string; expanded: string | null }[]; count: string; leer: string }
     const PERS_LISTE = `
       const p = ${PANEL(0)}; if (!p) return null;
@@ -1763,7 +1783,7 @@ async function main(): Promise<void> {
 
     const keyAP = await leseSchluessel(cdp);
     const fremd2 = keyAP ? await schreibeFremdeFassung(info.basePath, keyAP, PERSONEN2, { geraet: GERAET2, name: "iPad (Treiber)" }) : null;
-    const gelesen2 = fremd2 ? await pollUntil<boolean>(cdp, `const r = ${P}.api.restore(${q(`Hallo ${ANNA_PLATZHALTER}`)}, { caller: "gui-smoke" }); return r && r.text === "Hallo Anna Probe" ? true : null;`, 30_000, 500) : null;
+    const gelesen2 = fremd2 ? await pollUntil<boolean>(cdp, `const p = ${P}; const r = p ? p.api.restore(${q(`Hallo ${ANNA_PLATZHALTER}`)}, { caller: "gui-smoke" }) : null; return r && r.text === "Hallo Anna Probe" ? true : null;`, 30_000, 500) : null;
     await cdp.evaluate(ZEIGE_REITER("persons"));
     const persListeBereit = gelesen2 ? await pollUntil<PersonenListe>(cdp, `const l = (() => { ${PERS_LISTE} })(); return l && l.items.some((x) => x.label === "Anna Probe") ? l : null;`, 15_000, 300) : null;
 
@@ -1793,7 +1813,7 @@ async function main(): Promise<void> {
     record("AP2 Reiter Personen, Detail: ein Eintrag klappt auf (aria-expanded), zeigt jeden Wert mit Feld, Klartext und Platzhalter, je Wert „Wert abhängen“, darunter Zusammenführen und Vergessen (mod-warning); kein Klartext in einem aria-label",
       Boolean(detail) && detail!.expanded === "true" && detail!.forms.length === 3
         && form(ANNA_PLATZHALTER)?.text === "Anna Probe" && form(ANNA_PLATZHALTER)?.feld === "Name" && form(`${ANNA_PLATZHALTER}_Mail`)?.text === "anna@example.org" && form(`${ANNA_PLATZHALTER}_Mail`)?.feld === "Mail"
-        && form(`${ANNA_PLATZHALTER}_Telefon`)?.text === "030 5550101" && detail!.forms.every((f) => f.abhaengen)
+        && form(`${ANNA_PLATZHALTER}_Phone`)?.text === "030 5550101" && detail!.forms.every((f) => f.abhaengen)
         && detail!.knoepfe.map((b) => b.text).join("|") === "Merge with another entry|Forget" && detail!.knoepfe[1]!.warnung && !detail!.knoepfe[0]!.warnung
         && detail!.labels.length === 3 && detail!.labels.every((l) => l.includes("Person_") && !/Anna|anna@|5550101/.test(l)),
       `Detail=${q(detail ? { forms: detail.forms.map((f) => [f.feld, f.platzhalter]), knoepfe: detail.knoepfe, expanded: detail.expanded, labels: detail.labels } : null)}`);
@@ -1833,7 +1853,7 @@ async function main(): Promise<void> {
     const nachMerge = mergeNotice ? await restoreVon(`${ANTON_PLATZHALTER} und ${ANNA_PLATZHALTER}_Mail`) : null;
     const mergeListe = mergeNotice ? await pollUntil<PersonenListe & { hinweis: string }>(cdp, `
       const l = (() => { ${PERS_LISTE} })(); const li = ${OFFEN}; const n = li ? li.querySelector(".pseu-person-detail > .pseu-note") : null;
-      return l && l.items.filter((x) => /Probe/.test(x.label)).length === 1 && n ? { ...l, hinweis: n.textContent.trim() } : null;
+      return l && l.items.filter((x) => /^(Anna|Anton) Probe$/.test(x.label)).length === 1 && n ? { ...l, hinweis: n.textContent.trim() } : null;
     `, 10_000, 300) : null;
     const dateiAP3 = vorAP3 && eigeneId ? await oeffneEigeneDatei(info.basePath, eigeneId, vorAP3) : null;
     record("AP3 Zusammenführen aus dem Reiter: Partnerwahl, Bestätigung (nicht zerstörend), danach lösen beide Platzhalter-IDs weiter auf, die Ansicht zeigt einen Eintrag mit dem Hinweis auf beide Kennungen, die Gerätedatei auf der Platte trägt beide Namen",
@@ -1879,14 +1899,14 @@ async function main(): Promise<void> {
     `, 8000, 250) : null;
     const vergOk = vergFrage ? await klickeKnopf(cdp, "Forget for good") : false;
     const nachVerg = vergOk ? await pollUntil<{ text: string; forgotten: string[] }>(cdp, `
-      const r = ${P}.api.restore(${q(`${ANNA_PLATZHALTER} ${ANTON_PLATZHALTER} ${ANNA_PLATZHALTER}_Mail`)}, { caller: "gui-smoke" });
+      const pl = ${P}; const r = pl ? pl.api.restore(${q(`${ANNA_PLATZHALTER} ${ANTON_PLATZHALTER} ${ANNA_PLATZHALTER}_Mail`)}, { caller: "gui-smoke" }) : null;
       return r && Array.isArray(r.forgotten) && r.forgotten.length > 0 ? { text: r.text, forgotten: r.forgotten } : null;
     `, 15_000, 250) : null;
     const nachAP5 = await leseSchluessel(cdp);
     const dateiAP5 = nachAP5 && eigeneId ? await oeffneEigeneDatei(info.basePath, eigeneId, nachAP5) : null;
     const dateiOhne = dateiAP5 !== null && dateiAP5.tabelle !== "" && dateiAP5.tabelle.includes("anna@example.org") && !/Anna Probe|Anton Probe|5550101/.test(dateiAP5.tabelle);
     record("AP5 Vergessen aus dem Reiter: derselbe Warndialog wie der Befehl, ohne Personenwahl; der abgehängte Wert fehlt in der Liste der Werte und bleibt nach dem Vergessen lesbar, die zusammengeführten IDs sind beide vergessen, die Gerätedatei trägt nur noch den abgehängten Wert",
-      Boolean(vergFrage) && vergFrage!.titel === 'Forget "Anna Probe"?' && vergFrage!.zerstoerend && !vergFrage!.wahl && vergFrage!.text.includes("5550101") && vergFrage!.text.includes(`${ANNA_PLATZHALTER}_Telefon`)
+      Boolean(vergFrage) && vergFrage!.titel === 'Forget "Anna Probe"?' && vergFrage!.zerstoerend && !vergFrage!.wahl && vergFrage!.text.includes("5550101") && vergFrage!.text.includes(`${ANNA_PLATZHALTER}_Phone`)
         && !vergFrage!.text.includes("anna@example.org") && /only when the version of every device carries the mark/.test(vergFrage!.text)
         && vergOk && Boolean(nachVerg) && nachVerg!.text === `${ANNA_PLATZHALTER} ${ANTON_PLATZHALTER} anna@example.org` && nachVerg!.forgotten.includes(ANNA_PLATZHALTER) && nachVerg!.forgotten.includes(ANTON_PLATZHALTER)
         && vorAP5 !== null && nachAP5 !== null && nachAP5.stand === vorAP5.stand + 1 && dateiOhne,
