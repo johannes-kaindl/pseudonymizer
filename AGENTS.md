@@ -4,7 +4,7 @@ Orientierung für KI-Agenten (Claude Code, Codex, …) und Mitwirkende an diesem
 
 **Profil:** `ts-node` · `obsidian-plugin`.
 
-**Stand 2026-11-19:** Aufgaben 1 bis 11 stehen (Gerüst, Einstellungen, Kern, Schlüssel, Gerätedateien) und Aufgabe 12 Teil a: Einrichten, weiteres Gerät (Code eingeben), Ausweg aus `locked`, Reiter „Geräte und Schlüssel“ (Grundstock). Weiter mit Aufgabe 12 Teil b (Vergessen, Schlüssel ersetzen, Gerät entfernen). Die Design-Spec für Version 1 ist von Johannes am 2026-11-18 freigegeben und liegt im Coding-Cockpit (`25_Coding/pseudonymizer/`, Note „2026-11-18-pseudonymizer-design“ unter _SDD); der Bauplan „2026-11-18-pseudonymizer-plan-1“ liegt daneben. Die Kit-Bausteine sind beim Kit-Master bestellt (Tasks in den Cockpits code-kit und obsidian-kit). Kein Tag und kein Release, bevor das Sicherheits-Review der Kryptografie-Bausteine durch ist.
+**Stand 2026-11-19:** Aufgaben 1 bis 11 stehen (Gerüst, Einstellungen, Kern, Schlüssel, Gerätedateien) und Aufgabe 12 (Einrichten, weiteres Gerät, Ausweg aus `locked`, Reiter „Geräte und Schlüssel“, Person vergessen, Schlüssel ersetzen, Gerät entfernen). Weiter mit Aufgabe 13 (`transform`). Bekannte Kit-Mängel E1 bis E3 (Sicherheits-Review der Tabelle, code-kit 0.82.0) sind beim Kit-Master; das Plugin umgeht sie nicht, Pins bleiben bis zu seinem Tag. Die Design-Spec für Version 1 ist von Johannes am 2026-11-18 freigegeben und liegt im Coding-Cockpit (`25_Coding/pseudonymizer/`, Note „2026-11-18-pseudonymizer-design“ unter _SDD); der Bauplan „2026-11-18-pseudonymizer-plan-1“ liegt daneben. Die Kit-Bausteine sind beim Kit-Master bestellt (Tasks in den Cockpits code-kit und obsidian-kit). Kein Tag und kein Release, bevor das Sicherheits-Review der Kryptografie-Bausteine durch ist.
 
 ## Project character
 
@@ -24,9 +24,12 @@ src/obsidian/device.ts      geräteeigene Werte im lokalen Speicher (Klartext ze
 src/obsidian/settings-tab.ts  deklarativer Tab, Hilfe-Zeile zuerst
 src/core/                   reiner Kern (Einstellungen, Zustand, Protokoll, Inhalt der Gerätedatei, API-Hülle)
 src/core/devices-view.ts    Modell des Reiters „Geräte und Schlüssel“ (Zeilen, Fortschritt des Vergessens, Stand des Codes)
-src/obsidian/table-store.ts Gerätedateien öffnen, vereinigen, schreiben; `setUp` und `adopt` (Einrichten, Code eingeben), `markCodeShown`
+src/core/forget-plan.ts     rein: Einträge zur Wahl, Plan des Warndialogs (Werte, nicht lesbare Geräte, Ausnahmeliste)
+src/obsidian/table-store.ts Gerätedateien öffnen, vereinigen, schreiben; `setUp`, `adopt` (auch nach Schlüsselwechsel: alte Fassung mit dem alten Schlüssel übernehmen), `markCodeShown`, `forget` (immer n+1), `replaceKey`, `removeDevice`
 src/obsidian/setup.ts       Abläufe Einrichten, Code eingeben, Code anzeigen (Reihenfolge der Fragen und Schreibvorgänge; Fenster als `SetupUi`)
 src/obsidian/setup-modals.ts, setup-ui.ts  Fenster des Einrichtens und ihr Anschluss
+src/obsidian/forget.ts, key-actions.ts  Abläufe Person vergessen, Schlüssel ersetzen, Gerät entfernen (Fenster als `KeyActionsUi`)
+src/obsidian/key-actions-ui.ts  Personenwahl (SuggestModal), Warndialoge, Meldungen
 src/obsidian/devices-panel.ts  Reiter „Geräte und Schlüssel“
 src/obsidian/               Obsidian-Schicht (Gerätezustand, Einstellungsseite, Befehle, Ansicht)
 src/i18n/strings.ts         alle Nutzertexte, EN kanonisch, DE vollständig

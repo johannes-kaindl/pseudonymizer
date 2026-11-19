@@ -10,6 +10,8 @@ export interface DevicesHost {
   deviceName(): string;
   setDeviceName(name: string): void;
   run(id: CommandId): void;
+  /** Entfernt ein fremdes Gerät. */
+  removeDevice(deviceId: string): void;
 }
 
 const PROBLEM_KEYS = new Set(["unreadable-header", "newer-format", "authentication", "too-far", "bad-content", "read-failed", "invalid-name"]);
@@ -22,7 +24,7 @@ function rowStatus(r: DeviceRow): { phase: "ok" | "warning" | "idle"; text: stri
 }
 
 /** Die Liste der Gerätedateien, die im Ordner angekommen sind: Name, Stand, und ob sie sich lesen ließen (Text und Symbol, nie nur Farbe). Auch im gesperrten Zustand. */
-export function renderDeviceFiles(parent: HTMLElement, m: DevicesModel): void {
+export function renderDeviceFiles(parent: HTMLElement, m: DevicesModel, onRemove?: (row: DeviceRow) => void): void {
   parent.createEl("h4", { text: t("view.devices.files") });
   if (m.rows.length === 0 && m.stray.length === 0) {
     parent.createDiv({ cls: "pseu-note", text: t("view.devices.noFiles") });
@@ -37,6 +39,11 @@ export function renderDeviceFiles(parent: HTMLElement, m: DevicesModel): void {
     li.createDiv({ cls: "pseu-device-meta", text: t("view.devices.stand", r.stand) });
     const s = rowStatus(r);
     paintStatus(buildStatus(li), s.phase, s.text);
+    // Fremde Geräte lassen sich entfernen, das eigene nie; nur wo der Aufrufer es anbietet (bereit).
+    if (onRemove !== undefined && !r.own) {
+      const b = li.createEl("button", { cls: "pseu-device-remove", text: t("view.devices.remove"), attr: { type: "button", "aria-label": t("view.devices.removeLabel", r.name) } });
+      b.addEventListener("click", () => { onRemove(r); });
+    }
   }
   if (m.stray.length > 0) {
     parent.createDiv({ cls: "pseu-note", text: t("view.devices.stray") });
@@ -67,6 +74,10 @@ function renderKey(parent: HTMLElement, m: DevicesModel, host: DevicesHost): voi
   const actions = parent.createDiv({ cls: "pseu-devices-actions" });
   const b = actions.createEl("button", { text: t("view.devices.showCode"), attr: { type: "button" } });
   b.addEventListener("click", () => { host.run("show-recovery-code"); });
+  const replace = actions.createEl("button", { text: t("view.devices.replaceKey"), attr: { type: "button" } });
+  replace.addEventListener("click", () => { host.run("replace-key"); });
+  const forget = actions.createEl("button", { text: t("view.devices.forget"), attr: { type: "button" } });
+  forget.addEventListener("click", () => { host.run("forget-person"); });
 }
 
 function renderName(parent: HTMLElement, host: DevicesHost, onEditing: (editing: boolean) => void): void {
@@ -83,11 +94,11 @@ function renderName(parent: HTMLElement, host: DevicesHost, onEditing: (editing:
   });
 }
 
-/** Der Reiter „Geräte und Schlüssel“ im Zustand `ready` (Spec 8.3 „Stand anzeigen“, Schlüsselverlust). Knöpfe für Schlüssel ersetzen und Gerät entfernen gehören der nächsten Aufgabe und stehen hier nicht. */
+/** Der Reiter „Geräte und Schlüssel“ im Zustand `ready` (Spec 8.3 „Stand anzeigen“, Schlüsselverlust).  Knöpfe: Code anzeigen, Schlüssel ersetzen, Person vergessen und je fremdem Gerät „Gerät entfernen“. */
 export function renderDevices(parent: HTMLElement, host: DevicesHost, onEditing: (editing: boolean) => void = () => undefined): void {
   const m = host.devices();
   const root = parent.createDiv({ cls: "pseu-devices-panel" });
   renderName(root, host, onEditing);
-  renderDeviceFiles(root, m);
+  renderDeviceFiles(root, m, (row) => { host.removeDevice(row.deviceId); });
   renderKey(root, m, host);
 }

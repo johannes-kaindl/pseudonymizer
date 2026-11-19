@@ -22,6 +22,7 @@ function make(state: PluginState = "not-set-up", opts: { reason?: LockReason | n
   const listeners = new Set<() => void>();
   const runs: CommandId[] = [];
   const names: string[] = [];
+  const removed: string[] = [];
   let name = "Mac Büro";
   const host: ViewHost = {
     state: () => current,
@@ -32,12 +33,13 @@ function make(state: PluginState = "not-set-up", opts: { reason?: LockReason | n
     devices: () => opts.model ?? readyModel(),
     deviceName: () => name,
     setDeviceName: (n) => { names.push(n); name = n; },
+    removeDevice: (id) => { removed.push(id); },
   };
   const View = PseudonymizerView as unknown as new (leaf: unknown, host: ViewHost) => PseudonymizerView;
   const view = new View({}, host);
   (view as unknown as { contentEl: El }).contentEl = makeFakeEl();
   const root = (): El => (view as unknown as { contentEl: El }).contentEl;
-  return { view, host, root, runs, names, listeners, setState: (s: PluginState) => { current = s; for (const l of listeners) l(); } };
+  return { view, host, root, runs, names, removed, listeners, setState: (s: PluginState) => { current = s; for (const l of listeners) l(); } };
 }
 
 const panels = (root: El): El[] => root.children[1].children as El[];
@@ -156,8 +158,9 @@ describe("PseudonymizerView", () => {
     expect(text(items[0])).toContain("key stand 3");
     expect(text(items[1])).toContain("iPhone");
     expect(text(p.querySelectorAll(".pseu-devices-key")[0] as El)).toContain("key stand 3, which is the current stand");
-    // only what part a builds: no replace-key, no remove-device, no forget button
-    expect(buttons(p).map((b) => text(b))).toEqual(["Show recovery code"]);
+    // the key block offers show code, replace key and forget a person; a foreign device has its own remove button, this device has none
+    expect(buttons(p).map((b) => text(b))).toEqual(["Remove device", "Show recovery code", "Replace key", "Forget a person"]);
+    expect(items.map((li) => buttons(li).length)).toEqual([0, 1]);
     expect(text(p)).toContain("can no longer be turned back into names");
   });
 
@@ -178,10 +181,40 @@ describe("PseudonymizerView", () => {
     expect(text(panels(none.root())[2].querySelectorAll(".pseu-devices-key")[0] as El)).toContain("No saved recovery code is recorded");
   });
 
+  it("the key block's buttons run their commands; a device's remove button names it and passes its id, and this device's row has none", async () => {
+    const m = make("ready", {
+      model: readyModel({
+        rows: [
+          { deviceId: "own", name: "Mac Büro", own: true, stand: 0, status: "read", problemKind: null },
+          { deviceId: "x1", name: "iPhone", own: false, stand: 0, status: "read", problemKind: null },
+        ],
+      }),
+    });
+    await m.view.onOpen();
+    const all = buttons(panels(m.root())[2]);
+    const byText = (label: string): El => all.find((b) => text(b) === label)!;
+    for (const cb of byText("Replace key")._listeners.click) cb(new Event("click"));
+    for (const cb of byText("Forget a person")._listeners.click) cb(new Event("click"));
+    expect(m.runs).toEqual(["replace-key", "forget-person"]);
+    const remove = byText("Remove device");
+    expect(remove.getAttribute("aria-label")).toBe("Remove device iPhone");
+    for (const cb of remove._listeners.click) cb(new Event("click"));
+    expect(m.removed).toEqual(["x1"]);
+  });
+
+  it("locked: the list of files offers no remove button (nothing can be taken over while locked)", async () => {
+    const m = make("locked", {
+      reason: "foreign-chain",
+      model: readyModel({ state: "locked", reason: "foreign-chain", stand: null, codeStand: null, rows: [{ deviceId: "a", name: "a", own: false, stand: 2, status: "not-opened", problemKind: null }] }),
+    });
+    await m.view.onOpen();
+    expect(buttons(panels(m.root())[2]).map((b) => text(b))).toEqual(["Enter code"]);
+  });
+
   it("the 'Show recovery code' button runs the command", async () => {
     const m = make("ready");
     await m.view.onOpen();
-    const [b] = buttons(panels(m.root())[2]);
+    const [b] = buttons(panels(m.root())[2]).filter((x) => text(x) === "Show recovery code");
     for (const cb of b._listeners.click) cb(new Event("click"));
     expect(m.runs).toEqual(["show-recovery-code"]);
   });

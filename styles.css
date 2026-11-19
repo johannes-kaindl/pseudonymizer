@@ -152,8 +152,13 @@
 .pseu-devices-panel h4 { margin: var(--size-4-3) 0 0; }
 .pseu-devices-key { display: flex; flex-direction: column; gap: var(--size-2-1); }
 .pseu-devices-actions { display: flex; flex-wrap: wrap; gap: var(--size-4-2); }
+.pseu-device-remove { align-self: flex-start; }
 /* Tippfläche mindestens 44 px am Telefon (UI-STANDARD). */
-.is-mobile .pseu-devices-actions button { min-height: var(--size-4-11); }
+.is-mobile .pseu-devices-actions button, .is-mobile .pseu-device-remove { min-height: var(--size-4-11); }
+
+/* Personenwahl beim Vergessen: Bezeichnung und, kleiner darunter, Art und Zahl der Werte. */
+.pseu-suggest-label { overflow-wrap: anywhere; }
+.pseu-suggest-meta { color: var(--text-muted); font-size: var(--font-ui-smaller); }
 
 /* Platzhalter nachschlagen: Status als Symbol und Text, Platzhalter und Werte brechen um statt abzuschneiden. */
 .pseu-lookup-status { display: flex; align-items: center; gap: var(--size-4-2); margin-bottom: var(--size-4-3); font-weight: var(--font-semibold); }

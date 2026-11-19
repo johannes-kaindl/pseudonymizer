@@ -17,6 +17,9 @@ import { PseudonymizerEngine } from "./obsidian/engine";
 import { registerCommands, runCommand } from "./obsidian/commands";
 import { createDeviceState, type DeviceState } from "./obsidian/device";
 import { createKeyStore, type KeyStore } from "./obsidian/key-store";
+import { runForget } from "./obsidian/forget";
+import { runRemoveDevice, runReplaceKey, type KeyActionsHost } from "./obsidian/key-actions";
+import { createKeyActionsUi } from "./obsidian/key-actions-ui";
 import { runEnterCode, runSetUp, runShowCode, type SetupHost } from "./obsidian/setup";
 import { createSetupUi } from "./obsidian/setup-ui";
 import { createTableStore, type FileProblem, type TableStore } from "./obsidian/table-store";
@@ -79,6 +82,7 @@ export default class PseudonymizerPlugin extends Plugin {
       devices: () => this.devicesModel(),
       deviceName: () => this.device.deviceName,
       setDeviceName: (name) => { this.setDeviceName(name); },
+      removeDevice: (deviceId) => { void this.runRemoveDevice(deviceId); },
     }));
     registerCommands(this, this);
     this.addSettingTab(new PseudonymizerSettingTab(this.app, this));
@@ -225,6 +229,16 @@ export default class PseudonymizerPlugin extends Plugin {
     };
   }
 
+  /** Die Abläufe Vergessen, Schlüssel ersetzen und Gerät entfernen brauchen ebenfalls den Baustein der Gerätedateien. */
+  private keyActionsHost(): KeyActionsHost | null {
+    const store = this.tableStore;
+    if (store === null) { new Notice(t("notice.failed")); return null; }
+    return { store, memory: this.memory, ownDeviceId: () => this.deviceId, ui: createKeyActionsUi(this.app), changed: () => { this.emitChange(); } };
+  }
+
+  async runForget(): Promise<void> { const h = this.keyActionsHost(); if (h !== null) await runForget(h); }
+  async runReplaceKey(): Promise<void> { const h = this.keyActionsHost(); if (h !== null) await runReplaceKey(h); }
+  async runRemoveDevice(deviceId: string): Promise<void> { const h = this.keyActionsHost(); if (h !== null) await runRemoveDevice(h, deviceId); }
   async runSetUp(): Promise<void> { const h = this.setupHost(); if (h !== null) await runSetUp(h); }
   async runEnterCode(): Promise<void> { const h = this.setupHost(); if (h !== null) await runEnterCode(h); }
   async runShowCode(): Promise<void> { const h = this.setupHost(); if (h !== null) await runShowCode(h); }

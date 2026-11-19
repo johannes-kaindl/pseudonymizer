@@ -21,6 +21,9 @@ export interface CommandHost {
   runSetUp(): Promise<void>;
   runEnterCode(): Promise<void>;
   runShowCode(): Promise<void>;
+  /** Person vergessen und Schlüssel ersetzen (`forget.ts`, `key-actions.ts`); sie melden dem Nutzer selbst, was geschah. */
+  runForget(): Promise<void>;
+  runReplaceKey(): Promise<void>;
   /** Sagt Statusleiste und Ansicht, dass sich etwas geändert hat. */
   emitChange(): void;
 }
@@ -37,10 +40,10 @@ const HANDLERS: Record<CommandId, (host: CommandHost) => void> = {
   "lookup-placeholder": (h) => { void lookupPlaceholderCommand(h); },
   "copy-plaintext": notAvailable,
   "copy-placeholders": notAvailable,
-  "forget-person": notAvailable,
+  "forget-person": (h) => { void h.runForget(); },
   "show-recovery-code": (h) => { void h.runShowCode(); },
   "enter-recovery-code": (h) => { void h.runEnterCode(); },
-  "replace-key": notAvailable,
+  "replace-key": (h) => { void h.runReplaceKey(); },
   "set-up": (h) => { void h.runSetUp(); },
 };
 

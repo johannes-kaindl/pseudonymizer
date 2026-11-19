@@ -114,6 +114,8 @@ function makeHost(state: PluginState = "ready", over: { copyMode?: "placeholder"
     runSetUp: () => { flows.push("set-up"); return Promise.resolve(); },
     runEnterCode: () => { flows.push("enter-code"); return Promise.resolve(); },
     runShowCode: () => { flows.push("show-code"); return Promise.resolve(); },
+    runForget: () => { flows.push("forget"); return Promise.resolve(); },
+    runReplaceKey: () => { flows.push("replace-key"); return Promise.resolve(); },
   };
   const plugin = { addCommand: (c: (typeof added)[number]) => { added.push(c); return c; } };
   return { host, plugin, added, opened, flows, shown: () => shown, changes: () => changes };
@@ -177,7 +179,7 @@ describe("registerCommands", () => {
   it("a command whose function is missing shows the 'not available yet' notice", () => {
     const { host, plugin, added } = makeHost("ready", { editor: true });
     registerCommands(plugin, host);
-    for (const id of ["pseudonymize-selection", "pseudonymize-note", "copy-plaintext", "forget-person", "replace-key"]) {
+    for (const id of ["pseudonymize-selection", "pseudonymize-note", "copy-plaintext"]) {
       Notice.instances.length = 0;
       added.find((c) => c.id === id)!.checkCallback?.(false);
       expect(lastNotice(), id).toBe(STRINGS.en["notice.notAvailable"]);
@@ -192,6 +194,25 @@ describe("registerCommands", () => {
     for (const id of ["set-up", "enter-recovery-code", "show-recovery-code"]) added.find((c) => c.id === id)!.checkCallback?.(false);
     expect(flows).toEqual(["set-up", "enter-code", "show-code"]);
     expect(Notice.instances).toHaveLength(0);
+  });
+
+  it("forget-person and replace-key run their flows (ready), and are refused with the reason when locked or not set up", () => {
+    const ready = makeHost("ready");
+    registerCommands(ready.plugin, ready.host);
+    Notice.instances.length = 0;
+    for (const id of ["forget-person", "replace-key"]) ready.added.find((c) => c.id === id)!.checkCallback?.(false);
+    expect(ready.flows).toEqual(["forget", "replace-key"]);
+    expect(Notice.instances).toHaveLength(0);
+    const locked = makeHost("locked");
+    registerCommands(locked.plugin, locked.host);
+    locked.added.find((c) => c.id === "forget-person")!.checkCallback?.(false);
+    expect(lastNotice()).toBe(STRINGS.en["notice.locked"]);
+    expect(locked.flows).toEqual([]);
+    const fresh = makeHost("not-set-up");
+    registerCommands(fresh.plugin, fresh.host);
+    fresh.added.find((c) => c.id === "replace-key")!.checkCallback?.(false);
+    expect(lastNotice()).toBe(STRINGS.en["notice.notSetUp"]);
+    expect(fresh.flows).toEqual([]);
   });
 
   it("lookup-placeholder and search-plaintext are wired to their functions, not to the 'not available yet' notice", async () => {

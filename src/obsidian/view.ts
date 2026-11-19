@@ -21,6 +21,8 @@ export interface ViewHost {
   devices(): DevicesModel;
   deviceName(): string;
   setDeviceName(name: string): void;
+  /** Entfernt ein fremdes Gerät (Dialog, Übernehmen, Löschen). */
+  removeDevice(deviceId: string): void;
 }
 
 const EMPTY_KEY: Record<Exclude<ViewTab, "devices">, string> = {
