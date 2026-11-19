@@ -1,6 +1,6 @@
 /**
  * GUI-Smoke — fährt die Prüfpunkte aus docs/SMOKE.md gegen ein LAUFENDES Obsidian (CORE-TEST-02 b).
- * Stand: gebündelter Lauf der Aufgaben 14 bis 18 am 2026-11-19 (52 Punkte, grün; Gegenprobe 52 rot, `docs/SMOKE.md` § Runs). Fehlersuche: `--stop-nach <Punkt>` hält den Treiber nach einem Punkt an (weiter mit `touch /tmp/pseu-weiter`). Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
+ * Stand: bestätigender Lauf nach N1 bis N6 am 2026-11-19 (52 Punkte, grün; Gegenprobe 52 rot im Lauf davor, `docs/SMOKE.md` § Runs). Fehlersuche: `--stop-nach <Punkt>` hält den Treiber nach einem Punkt an (weiter mit `touch /tmp/pseu-weiter`). Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
  * die Gerätedateien: Einrichten (Abbruch, Kontrollkästchen, Datei und Schlüssel), eine fremde Fassung im Ordner, den Reiter „Geräte und Schlüssel“,
  * die Sperre nach gelöschtem Schlüssel und die Code-Eingabe, dazu (Teil b) „Trotzdem einrichten“, Schlüssel ersetzen, Person vergessen (die Gerätedatei auf der Platte
  * wird mit dem Schlüssel im Treiber geöffnet und auf Klartext geprüft) und Gerät entfernen; seit Aufgabe 16 die Lesesicht (Einblenden, Umschalter, Sperren, Vergessen, Kopieren, Kopier-Befehle, Popout, Zug mit der Maus, PDF-Export). Live Preview folgt mit Aufgabe 17.
@@ -28,7 +28,7 @@ import { boxOf, capture, setWindowSize } from "../../tools/obsidian-cdp/shot.js"
 import { buildVault, requireEigenerBuild, stagingVaultDir } from "../../tools/obsidian-cdp/vault.js";
 import { closingDeviceId, decodeClosing, decodePayload, encodePayload } from "../src/core/payload.js";
 import { openEnvelope, readEnvelopeHeader, sealEnvelope } from "../src/vendor/kit/key-envelope.js";
-import { encryptionKey, type ChainState } from "../src/vendor/kit/key-ratchet.js";
+import { advanceTo, encryptionKey, type ChainState } from "../src/vendor/kit/key-ratchet.js";
 import { emptyTable, serializeTable, tableAddEntry, tableAddValue, type PlaceholderTable } from "../src/vendor/kit/placeholder-table.js";
 import { encodeRecoveryCode } from "../src/vendor/kit/recovery-code.js";
 
@@ -88,7 +88,7 @@ const PUNKTE = [
   "NA4 Der Eigenschaften-Bereich zeigt den Wert von from und den Listeneintrag von cc zeichengleich zur Datei",
   "NA5 Diese Notiz pseudonymisieren, im Prüffenster abgebrochen: die Notiz ist byte-gleich, die Notice nennt den Abbruch ohne Klartext",
   "NA6 Eine Notiz mit mail_id bleibt unberührt, es öffnet kein Prüffenster, die Notice verweist auf mailstone",
-  "NA7 Eigenschaften, die der Kit-Leser nicht ganz liest (Fortsetzungszeile, Liste von Abbildungen, Kommentar im Wert): parseYaml auf dem Block liefert für die flachen Werte genau den gelesenen Wert und für die anderen etwas anderes, der Befehl lässt diese byte-gleich und meldet ihre Namen, Frontmatter-Zeilen gehen nicht verloren, der Rest wird pseudonymisiert",
+  "NA7 Eigenschaften, die der Kit-Leser nicht ganz liest (Fortsetzungszeile, Liste von Abbildungen, Kommentar im Wert): Obsidians Frontmatter-Auswertung des gelesenen Texts (computeMetadataAsync) liefert für die flachen Werte genau den gelesenen Wert und für die anderen etwas anderes, der Befehl lässt diese byte-gleich und meldet ihre Namen, Frontmatter-Zeilen gehen nicht verloren, der Rest wird pseudonymisiert",
   "AP1 Reiter Personen: die Suche (echte Eingabe) findet über Mail, Telefon in anderer Schreibweise, Namensteil und Großschreibung; ein Treffer ohne Ergebnis sagt es in Worten",
   "AP2 Reiter Personen, Detail: ein Eintrag klappt auf (aria-expanded), zeigt jeden Wert mit Feld, Klartext und Platzhalter, je Wert „Wert abhängen“, darunter Zusammenführen und Vergessen (mod-warning); kein Klartext in einem aria-label",
   "AP3 Zusammenführen aus dem Reiter: Partnerwahl, Bestätigung (nicht zerstörend), danach lösen beide Platzhalter-IDs weiter auf, die Ansicht zeigt einen Eintrag mit dem Hinweis auf beide Kennungen, die Gerätedatei auf der Platte trägt beide Namen",
@@ -279,8 +279,12 @@ async function oeffneAbschlussdatei(basePath: string, eigeneId: string, alt: Sch
   if (!existsSync(pfad)) return { vorhanden: false, gesperrt: false, nurMarkierung: false };
   const bytes = Uint8Array.from(readFileSync(pfad));
   const h = readEnvelopeHeader(bytes);
-  if (!h.ok || h.header.stand !== alt.stand) return { vorhanden: true, gesperrt: false, nurMarkierung: false };
-  const key = await encryptionKey({ chainId: Uint8Array.from(alt.chainId), stand: alt.stand, chainKey: Uint8Array.from(alt.key) });
+  // Seit N1 liegt die Abschlussdatei 64 Stände über dem gelesenen Höchststand der alten Kette (`CLOSING_LEAD`); ein Gerät mit dem alten Schlüssel dreht bis dorthin weiter und öffnet sie dann.
+  // Der Treiber schreibt die 64 nicht von der Quelle ab, sondern verlangt den Vorsprung als Wert und dreht den alten Schlüssel selbst dorthin.
+  if (!h.ok || h.header.stand !== alt.stand + 64) return { vorhanden: true, gesperrt: false, nurMarkierung: false };
+  const vorn = await advanceTo({ chainId: Uint8Array.from(alt.chainId), stand: alt.stand, chainKey: Uint8Array.from(alt.key) }, h.header.stand);
+  if (!vorn.ok) return { vorhanden: true, gesperrt: false, nurMarkierung: false };
+  const key = await encryptionKey(vorn.value);
   if (!key.ok) return { vorhanden: true, gesperrt: false, nurMarkierung: false };
   const o = await openEnvelope(key.value, bytes);
   if (!o.ok) return { vorhanden: true, gesperrt: false, nurMarkierung: false };
@@ -1725,7 +1729,7 @@ async function main(): Promise<void> {
     await cdp.evaluate(SCHLIESSE_NOTIZEN);
 
     // NA7 (Sicherheits-Lesung Runde 1, B1; Quelle seit Runde 2, N3): Eigenschaften, deren Wert der Kit-Leser nicht ganz liest, bleiben unberührt. Im Lauf vom 2026-11-19 mit dem `metadataCache` gemessen; seit N3 liest das Plugin
-    // `parseYaml` auf dem Block des gelesenen Texts, der Punkt misst jetzt dieselbe Quelle (Block aus der Datei, `require("obsidian").parseYaml` im Fenster). Umgestellt, noch nicht wieder gelaufen.
+    // `parseYaml` auf dem Block des gelesenen Texts, der Punkt misst jetzt dieselbe Quelle (Text aus der Datei; `require("obsidian").parseYaml` ist im Fenster nicht erreichbar, der Treiber nimmt `computeMetadataAsync`, Obsidians Auswertung desselben Texts).
     // Gemessen wird die Annahme, auf der der Schutz ruht: `parseYaml` liefert für einen flachen Wert denselben Text wie der Kit-Leser, für die drei Formen etwas anderes.
     const NA7 = "Smoke-Eigenschaften.md";
     const NA7_NOTIZ = [
@@ -1736,8 +1740,9 @@ async function main(): Promise<void> {
     const na7offen = await oeffneNotiz(cdp, NA7, "preview", 0);
     const na7cache = na7offen ? await pollUntil<{ from: unknown; title: unknown; people: unknown; author: unknown }>(cdp, `
       const f = app.vault.getAbstractFileByPath(${q(NA7)}); if (!f) return null;
-      const m = /^---\n([\s\S]*?)\n---\n/.exec(await app.vault.read(f)); if (!m) return null;
-      const y = require("obsidian").parseYaml(m[1]);
+      // Das Fenster erreicht require("obsidian") nicht (gemessen 2026-11-19: Cannot find module); Obsidians eigene Frontmatter-Auswertung des gelesenen Texts ist computeMetadataAsync (kein Nachlauf wie beim metadataCache der Datei).
+      const c = await app.metadataCache.computeMetadataAsync(new TextEncoder().encode(await app.vault.read(f)).buffer);
+      const y = c && c.frontmatter;
       return y ? { from: y.from, title: y.title, people: y.people, author: y.author } : null;
     `, 8000, 200) : null;
     await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:pseudonymize-note`)}); return true;`);
@@ -1748,7 +1753,7 @@ async function main(): Promise<void> {
     const na7notice = na7text !== null ? await pollUntil<string>(cdp, NOTICE_MIT("left unchanged"), 5000, 200) : null;
     const na7zeilen = ["title: Berta Beispiel", "  und Erika Musterfrau", "people:", "  - name: Berta Beispiel", "    role: Kassenwart", "  - Erika", "author: Berta Beispiel # Chefin"];
     const na7behalten = na7text !== null && na7zeilen.every((z) => (na7text as string).split("\n").includes(z));
-    record("NA7 Eigenschaften, die der Kit-Leser nicht ganz liest (Fortsetzungszeile, Liste von Abbildungen, Kommentar im Wert): parseYaml auf dem Block liefert für die flachen Werte genau den gelesenen Wert und für die anderen etwas anderes, der Befehl lässt diese byte-gleich und meldet ihre Namen, Frontmatter-Zeilen gehen nicht verloren, der Rest wird pseudonymisiert",
+    record("NA7 Eigenschaften, die der Kit-Leser nicht ganz liest (Fortsetzungszeile, Liste von Abbildungen, Kommentar im Wert): Obsidians Frontmatter-Auswertung des gelesenen Texts (computeMetadataAsync) liefert für die flachen Werte genau den gelesenen Wert und für die anderen etwas anderes, der Befehl lässt diese byte-gleich und meldet ihre Namen, Frontmatter-Zeilen gehen nicht verloren, der Rest wird pseudonymisiert",
       Boolean(na7cache) && na7cache!.from === "Berta Beispiel <berta@example.org>" && na7cache!.title !== "Berta Beispiel" && JSON.stringify(na7cache!.people) !== JSON.stringify(["Berta Beispiel", "Erika"])
         && na7cache!.author !== "Berta Beispiel # Chefin" && na7text !== null && na7behalten && !/^from: Berta/m.test(na7text as string) && !/\nHallo Berta Beispiel/.test(na7text as string)
         && na7notice !== null && /title/.test(na7notice) && /people/.test(na7notice) && !/Berta|Erika/.test(na7notice),
