@@ -4,7 +4,7 @@ Orientierung für KI-Agenten (Claude Code, Codex, …) und Mitwirkende an diesem
 
 **Profil:** `ts-node` · `obsidian-plugin`.
 
-**Stand 2026-11-24 (Welle 37):** Bauplan Version 1, Aufgaben 1 bis 19, gebaut und gepusht; Kit auf code-kit 0.86.1 und obsidian-kit 0.107.0. `restore` der Plugin-API hat den optionalen Schalter `skipAddressesAndCode` (Entscheidung Johannes 2026-11-20, Vorgabe „überall“, Bereiche wie `core/restore-zones.ts`). Release-Infrastruktur steht (Remotes `origin` und `github`, CHANGELOG, Trockenlauf von `release.mjs`); die Erstveröffentlichung 0.1.0 gibt Johannes nach den iPhone-Messungen frei (Schlüsselbund, WebCrypto, Sync der Endung `.pseudo`, Live Preview, Prüffenster am Telefon, mit Entscheidung D; Handover im Cockpit). Der GUI-Smoke (`npm run smoke:gui`, `docs/SMOKE.md`) und die README-Bilder (`npm run shots`) gehören vor dem Release an den Release-Stand. Stand je Aufgabe, Setzungen und Grenzen stehen als Vermerke im Bauplan „2026-11-18-pseudonymizer-plan-1“ im Coding-Cockpit (`25_Coding/pseudonymizer/` unter _SDD, neben der freigegebenen Design-Spec „2026-11-18-pseudonymizer-design“).
+**Stand 2026-11-24 (Welle 37):** Bauplan Version 1, Aufgaben 1 bis 19, gebaut und gepusht; Kit auf code-kit 0.86.1 und obsidian-kit 0.108.0. `restore` der Plugin-API hat den optionalen Schalter `skipAddressesAndCode` (Entscheidung Johannes 2026-11-20, Vorgabe „überall“, Bereiche wie `core/restore-zones.ts`). Release-Infrastruktur steht (Remotes `origin` und `github`, CHANGELOG, Trockenlauf von `release.mjs`); die Erstveröffentlichung 0.1.0 gibt Johannes nach den iPhone-Messungen frei (Schlüsselbund, WebCrypto, Sync der Endung `.pseudo`, Live Preview, Prüffenster am Telefon, mit Entscheidung D; Handover im Cockpit). Der GUI-Smoke (`npm run smoke:gui`, `docs/SMOKE.md`) und die README-Bilder (`npm run shots`) gehören vor dem Release an den Release-Stand. Stand je Aufgabe, Setzungen und Grenzen stehen als Vermerke im Bauplan „2026-11-18-pseudonymizer-plan-1“ im Coding-Cockpit (`25_Coding/pseudonymizer/` unter _SDD, neben der freigegebenen Design-Spec „2026-11-18-pseudonymizer-design“).
 
 ## Project character
 
@@ -14,7 +14,7 @@ Orientierung für KI-Agenten (Claude Code, Codex, …) und Mitwirkende an diesem
 
 **PROF-OBS-03/04 — reiner Kern ohne `obsidian`-Import.** `src/core/` ist obsidian-frei und in Node ohne DOM testbar; nur `src/main.ts` und `src/obsidian/` importieren `obsidian`. `npm run check:pure` nagelt das fest.
 
-**Kit-first, Vendoring statt Dependency.** Geteilte Bausteine liegen als Snapshot unter `src/vendor/kit/` (pure), `src/vendor/kit-obsidian/` und `tests/vendor/kit/`, je mit Herkunfts-Header und `VENDOR.json`. Nie von Hand editieren; Re-Vendoring über `node ../tools/kit-sync/kit-sync.mjs` (Pins in `tools/kit-sync.json`, Tags obsidian-kit 0.107.0 und code-kit 0.86.1). Kryptografie nur über die Kit-Bausteine, kein `node:crypto`, kein eigenes Verfahren.
+**Kit-first, Vendoring statt Dependency.** Geteilte Bausteine liegen als Snapshot unter `src/vendor/kit/` (pure), `src/vendor/kit-obsidian/` und `tests/vendor/kit/`, je mit Herkunfts-Header und `VENDOR.json`. Nie von Hand editieren; Re-Vendoring über `node ../tools/kit-sync/kit-sync.mjs` (Pins in `tools/kit-sync.json`, Tags obsidian-kit 0.108.0 und code-kit 0.86.1). Kryptografie nur über die Kit-Bausteine, kein `node:crypto`, kein eigenes Verfahren.
 
 ```
 src/main.ts                 onload: Sprache, Einstellungen, Gerätezustand, Einstellungsseite (wächst mit den Aufgaben)
