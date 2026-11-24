@@ -261,6 +261,25 @@ describe("PseudonymizerView", () => {
     expect(panels(m.root())[2].querySelectorAll("input")[0]).not.toBe(input);
   });
 
+  it("a change from the host (the saved name) arriving while the button is pressed does not swap it before its click", async () => {
+    const m = make("ready");
+    await m.view.onOpen();
+    const panel = panels(m.root())[2];
+    const input = panel.querySelectorAll("input")[0] as El;
+    const [b] = buttons(panel).filter((x) => text(x) === "Show recovery code");
+    for (const cb of input._listeners.focus) cb(new Event("focus"));
+    for (const cb of panel._listeners.pointerdown) cb(new Event("pointerdown"));
+    for (const cb of input._listeners.blur) cb(new Event("blur"));
+    // Das Speichern des Namens ist asynchron: seine Meldung kommt nach dem `blur`, solange die Maus noch gedrückt ist.
+    for (const l of m.listeners) l();
+    expect(buttons(panels(m.root())[2]).filter((x) => text(x) === "Show recovery code")[0]).toBe(b);
+    for (const cb of panel._listeners.pointerup) cb(new Event("pointerup"));
+    for (const cb of b._listeners.click) cb(new Event("click"));
+    expect(m.runs).toEqual(["show-recovery-code"]);
+    for (const cb of panel._listeners.click) cb(new Event("click"));
+    expect(panels(m.root())[2].querySelectorAll("input")[0]).not.toBe(input);
+  });
+
   it("leaving the name field with the keyboard repaints at once", async () => {
     const m = make("ready");
     await m.view.onOpen();

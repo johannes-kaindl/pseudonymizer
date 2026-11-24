@@ -66,6 +66,8 @@ class TabPanel implements HubPanel<ViewTab> {
   private render(): void {
     const c = this.container;
     if (!c || this.editing) return;
+    // Auch eine Änderung des Hosts (etwa das Speichern des Namens, das nach dem `blur` fertig wird) tauscht den Knopf nicht vor seinem `click` aus.
+    if (this.pressed) { this.pending = true; return; }
     this.pending = false;
     c.empty();
     c.addClass("pseu-panel");
