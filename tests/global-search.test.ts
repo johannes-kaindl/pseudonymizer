@@ -20,6 +20,15 @@ describe("openGlobalSearch", () => {
     expect(openGlobalSearch(appWith({ getPluginById: () => ({ instance: {} }) }), "q")).toBe(false);
     expect(openGlobalSearch(appWith({ getPluginById: () => ({ instance: { openGlobalSearch: "no" } }) }), "q")).toBe(false);
   });
+  it("says false, and does not call the search, when the core plugin is switched off (enabled false), true when enabled is true or absent", () => {
+    const calls: string[] = [];
+    const instance = { openGlobalSearch(q: string) { calls.push(q); } };
+    expect(openGlobalSearch(appWith({ getPluginById: () => ({ enabled: false, instance }) }), "q")).toBe(false);
+    expect(calls).toEqual([]);
+    expect(openGlobalSearch(appWith({ getPluginById: () => ({ enabled: true, instance }) }), "q")).toBe(true);
+    expect(openGlobalSearch(appWith({ getPluginById: () => ({ instance }) }), "q2")).toBe(true);
+    expect(calls).toEqual(["q", "q2"]);
+  });
   it("says false when the search throws", () => {
     const boom = { getPluginById: () => ({ instance: { openGlobalSearch: () => { throw new Error("Max Mustermann"); } } }) };
     expect(openGlobalSearch(appWith(boom), "q")).toBe(false);
