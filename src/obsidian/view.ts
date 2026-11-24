@@ -38,6 +38,10 @@ class TabPanel implements HubPanel<ViewTab> {
   private unsubscribe: (() => void) | null = null;
   /** Solange das Namensfeld den Fokus hat, malt eine Änderung die Seite nicht neu (sonst ginge die Eingabe verloren). */
   private editing = false;
+  /** Ein Neuzeichnen nach dem Verlassen des Namensfelds wartet, solange die Maus im Reiter gedrückt ist: `blur` kommt beim `mousedown` auf einen Knopf, und ein Neuzeichnen
+   *  tauschte den Knopf vor seinem `click` aus (der erste Klick ginge verloren). Nachgeholt wird es beim `click` am Reiter, also nach dem Klick-Handler des Knopfs. */
+  private pressed = false;
+  private pending = false;
   /** Suche und aufgeklappter Eintrag des Reiters Personen überleben das Neuzeichnen. */
   private readonly personsState: PersonsPanelState = { query: "", selected: null };
   constructor(private readonly tab: (typeof VIEW_TABS)[number], private readonly host: ViewHost) {}
@@ -48,6 +52,9 @@ class TabPanel implements HubPanel<ViewTab> {
 
   mount(container: HTMLElement): void {
     this.container = container;
+    container.addEventListener("pointerdown", () => { this.pressed = true; });
+    container.addEventListener("pointerup", () => { this.pressed = false; });
+    container.addEventListener("click", () => { if (this.pending) this.render(); });
     this.unsubscribe = this.host.onChange(() => { this.render(); });
     this.render();
   }
@@ -59,6 +66,7 @@ class TabPanel implements HubPanel<ViewTab> {
   private render(): void {
     const c = this.container;
     if (!c || this.editing) return;
+    this.pending = false;
     c.empty();
     c.addClass("pseu-panel");
     const state = this.host.state();
@@ -67,7 +75,12 @@ class TabPanel implements HubPanel<ViewTab> {
     paintStatus(buildStatus(c), ind.phase, t(ind.textKey));
 
     if (state === "ready") {
-      const editing = (on: boolean): void => { this.editing = on; if (!on) this.render(); };
+      const editing = (on: boolean): void => {
+        this.editing = on;
+        if (on) this.pressed = false;
+        else if (this.pressed) this.pending = true;
+        else this.render();
+      };
       if (this.tab.id === "devices") renderDevices(c, this.host, editing);
       else if (this.tab.id === "persons") renderPersons(c, this.host.persons, this.personsState);
       else renderExceptions(c, this.host.persons);

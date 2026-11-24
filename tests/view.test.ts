@@ -243,6 +243,35 @@ describe("PseudonymizerView", () => {
     expect(panels(m.root())[2].querySelectorAll("input")[0]).not.toBe(before);
   });
 
+  it("leaving the name field by pressing a button keeps the button until its click, then repaints (first click not lost)", async () => {
+    const m = make("ready");
+    await m.view.onOpen();
+    const panel = panels(m.root())[2];
+    const input = panel.querySelectorAll("input")[0] as El;
+    const [b] = buttons(panel).filter((x) => text(x) === "Show recovery code");
+    for (const cb of input._listeners.focus) cb(new Event("focus"));
+    for (const l of m.listeners) l();
+    for (const cb of panel._listeners.pointerdown) cb(new Event("pointerdown"));
+    for (const cb of input._listeners.blur) cb(new Event("blur"));
+    expect(buttons(panels(m.root())[2]).filter((x) => text(x) === "Show recovery code")[0]).toBe(b);
+    for (const cb of panel._listeners.pointerup) cb(new Event("pointerup"));
+    for (const cb of b._listeners.click) cb(new Event("click"));
+    expect(m.runs).toEqual(["show-recovery-code"]);
+    for (const cb of panel._listeners.click) cb(new Event("click"));
+    expect(panels(m.root())[2].querySelectorAll("input")[0]).not.toBe(input);
+  });
+
+  it("leaving the name field with the keyboard repaints at once", async () => {
+    const m = make("ready");
+    await m.view.onOpen();
+    const panel = panels(m.root())[2];
+    const input = panel.querySelectorAll("input")[0] as El;
+    for (const cb of panel._listeners.pointerdown) cb(new Event("pointerdown"));
+    for (const cb of input._listeners.focus) cb(new Event("focus"));
+    for (const cb of input._listeners.blur) cb(new Event("blur"));
+    expect(panels(m.root())[2].querySelectorAll("input")[0]).not.toBe(input);
+  });
+
   it("the state sits on top as a status indicator with text, icon, class and aria-label", async () => {
     const m = make("locked");
     await m.view.onOpen();
