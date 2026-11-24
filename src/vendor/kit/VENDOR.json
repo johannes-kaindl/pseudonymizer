@@ -4,7 +4,7 @@
   "sha": "8d96928",
   "vendored": "clip-context.ts, code-spans.ts, critic-markup.ts, error-message.ts, fences.ts, fold-case.ts, i18n.ts, iban.ts, phone.ts, pii-detect.ts, placeholder.ts, placeholder-table.ts, recovery-code.ts, redact.ts, rel-path.ts, replaceable-spans.ts, rotation.ts, secrets.ts, text-window.ts, clipboard.ts, key-envelope.ts, key-ratchet.ts",
   "license": "AGPL-3.0-or-later",
-  "obsidian_kit_version": "0.106.0",
-  "obsidian_kit_sha": "abb26f3",
+  "obsidian_kit_version": "0.107.0",
+  "obsidian_kit_sha": "9c7d9f3",
   "obsidian_kit_vendored": "block-writer.ts, frontmatter.ts, frontmatter-patch.ts, note-edit.ts, plugin-id.ts, pseudonymizer-source.ts, vault-path.ts"
 }

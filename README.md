@@ -36,7 +36,19 @@ This is pseudonymization, not anonymization. The plugin does not claim to anonym
 
 ## Install
 
-Not available yet. The plugin is under construction and has no release.
+There is no release yet. Once version 0.1.0 is out, the plugin can be installed in three ways.
+
+### From Obsidian's Community plugins browser
+
+Once the plugin has passed the store review: **Settings → Community plugins → Browse**, search for *Pseudonymizer*, **Install**, **Enable**.
+
+### Manually
+
+Download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/johannes-kaindl/pseudonymizer/releases/latest), copy them into the folder `pseudonymizer` inside your vault's plugin folder (`<vault>/.obsidian/plugins/`) and enable the plugin under **Settings → Community plugins**.
+
+### With BRAT
+
+Add `johannes-kaindl/pseudonymizer` as a beta plugin in the BRAT plugin.
 
 ## Usage
 
@@ -64,7 +76,7 @@ Everything below is a command in the command palette. Commands carry an icon, so
 
 **Replace key and remove device.** *Replace key* creates a new random key and writes this device's version again under it; every other device is locked until you enter the new recovery code there. It is the answer to a lost device, because removing a device does not take its access away. *Remove device* takes a device that never catches up out of the list, after taking over everything readable from its file; if the file cannot be read any more, whatever only that device knew is lost, and the dialog says so.
 
-**For other plugins.** The plugin offers a plugin API v1 (`status`, `transform`, `restore`, `containsPlaceholder`) at `app.plugins.plugins.pseudonymizer.api`. `transform` returns only after new assignments are written; it is all or nothing and deterministic. `restore` is synchronous and reports placeholders it cannot resolve (`unknown`) separately from forgotten ones (`forgotten`); a consumer that sends something out treats a non-empty `unknown` like *locked*. There is no `forget` in version 1. The contract is the file `pseudonymizer-source` in `obsidian-kit`. `restore` puts the plain text back everywhere, also in link targets, image URLs and code; the calling plugin is responsible for where the text goes next. The plugin's own surfaces (reading view, Live Preview, the copy commands) are narrower and leave placeholders there.
+**For other plugins.** The plugin offers a plugin API v1 (`status`, `transform`, `restore`, `containsPlaceholder`) at `app.plugins.plugins.pseudonymizer.api`. `transform` returns only after new assignments are written; it is all or nothing and deterministic. `restore` is synchronous and reports placeholders it cannot resolve (`unknown`) separately from forgotten ones (`forgotten`); a consumer that sends something out treats a non-empty `unknown` like *locked*. There is no `forget` in version 1. The contract is the file `pseudonymizer-source` in `obsidian-kit`. By default `restore` puts the plain text back everywhere, also in link targets, image URLs, HTML attributes and code; the calling plugin is responsible for where the text goes next. With the optional `skipAddressesAndCode: true` it restores only where `transform` would replace, the same zones as the plugin's own surfaces (reading view, Live Preview, the copy commands): placeholders in link and image targets, bare URLs (also inside HTML attributes such as `href`), code, comments, math, embeds, tags and wikilink targets stay (the alias after `|` is restored), the target of `mailto:` is restored, and in the front matter each property value is checked on its own. Placeholders left standing count neither in `unknown` nor in `forgotten`.
 
 ## What it protects and what it does not
 

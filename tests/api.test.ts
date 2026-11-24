@@ -162,6 +162,56 @@ describe("createApi", () => {
     });
   });
 
+  describe("restore with skipAddressesAndCode", () => {
+    const P = "Person_k3x9m2ab7q";
+    const U = "Person_zz9zz9zz9z";
+    // Engine wie die echte: ersetzt jeden bekannten Platzhalter, nennt die unbekannten.
+    const engineRestore = (text: string) => {
+      const unknown: string[] = [];
+      let restored = 0;
+      const out = text.replace(/Person_[a-z0-9]{10}/g, (m) => {
+        if (m === P) { restored += 1; return SECRET; }
+        unknown.push(m);
+        return m;
+      });
+      return { text: out, restored, unknown, forgotten: [] };
+    };
+    const doc = `Hallo ${P}, [Profil](https://example.org/${P}) ![](https://example.org/${U}.png) \`${P}\` [mail](mailto:${P}@example.org)`;
+
+    it("without the switch, restore sets the plain text everywhere (unchanged default)", () => {
+      const { api: a, calls } = api("ready", { restore: vi.fn(engineRestore) });
+      const r = a.restore(doc, { caller: "mailstone" }) as { text: string; unknown: string[] };
+      expect(r.text).not.toContain(P);
+      expect(r.unknown).toEqual([U]);
+      expect(calls.restore).not.toHaveBeenCalled();
+      const off = a.restore(doc, { caller: "mailstone", skipAddressesAndCode: false }) as { text: string };
+      expect(off.text).toBe(r.text);
+    });
+    it("with the switch, placeholders in link targets, image URLs and code stay; text and mailto are restored", () => {
+      const { api: a } = api("ready", { restore: vi.fn(engineRestore) });
+      const r = a.restore(doc, { caller: "mailstone", skipAddressesAndCode: true }) as { text: string; restored: number; unknown: string[]; forgotten: string[] };
+      expect(r.text).toBe(`Hallo ${SECRET}, [Profil](https://example.org/${P}) ![](https://example.org/${U}.png) \`${P}\` [mail](mailto:${SECRET}@example.org)`);
+      expect(r.restored).toBe(2);
+      expect(r.unknown).toEqual([]);
+      expect(r.forgotten).toEqual([]);
+      expect(Object.keys(r).sort()).toEqual(["forgotten", "restored", "text", "unknown"]);
+    });
+    it("with the switch, a frontmatter value that is an address stays, a plain value is restored", () => {
+      const { api: a } = api("ready", { restore: vi.fn(engineRestore) });
+      const r = a.restore(`---\nautor: ${P}\ncover: https://example.org/${P}.png\n---\nText`, { caller: "x", skipAddressesAndCode: true }) as { text: string };
+      expect(r.text).toBe(`---\nautor: ${SECRET}\ncover: https://example.org/${P}.png\n---\nText`);
+    });
+    it("with the switch, an error of the engine comes back unchanged", () => {
+      const { api: a } = api("ready", { restore: () => ({ error: "locked", message: "the table is locked" }) });
+      expect(code(a.restore(`Hallo ${P}`, { caller: "x", skipAddressesAndCode: true }))).toBe("locked");
+    });
+    it("a switch that is not a boolean -> invalid-input, engine not called", () => {
+      const { api: a, calls } = api();
+      expect(code(a.restore("t", { caller: "x", skipAddressesAndCode: "yes" } as unknown as { caller: string }))).toBe("invalid-input");
+      expect(calls.restore).not.toHaveBeenCalled();
+    });
+  });
+
   describe("containsPlaceholder", () => {
     it("a non-string is false and the engine is not asked", () => {
       const { api: a, calls } = api();

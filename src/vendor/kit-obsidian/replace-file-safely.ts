@@ -1,4 +1,4 @@
-// vendored from obsidian-kit@0.106.0, src/obsidian/replace-file-safely.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from obsidian-kit@0.107.0, src/obsidian/replace-file-safely.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 // Eine Datei ersetzen, ohne sie zerstören zu können (Welle 36, h2b, Bestellung 13; gehoben aus `device-files.ts`, Welle 36, kp1b, Teil D).
 //
 // Messung (REGISTRY „Eine Datei ersetzen, ohne sie zerstören zu können“, gemessen an Obsidian 1.13.7): `adapter.writeBinary` kürzt das Ziel auf 0 Bytes, bevor es die ersten Bytes liefert, und `adapter.rename`

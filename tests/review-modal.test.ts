@@ -92,7 +92,7 @@ describe("Aufbau", () => {
     expect(lastModal().contentEl.querySelector(".pseu-review-summary").textContent).toBe("2 new findings · 0 known values are replaced");
     // die Kontextzeile zeigt den Treffer hervorgehoben (mark), nie die ganze Notiz
     expect(card(ERIKA).querySelector("mark").textContent).toBe(ERIKA);
-    expect(card(ERIKA).querySelector(".okit-review-context").textContent).toBe(`„Hallo ${ERIKA},“`);
+    expect(card(ERIKA).querySelector(".okit-review-context").textContent).toBe(`“Hallo ${ERIKA},”`); // englische Oberfläche: englische Anführungszeichen (Kit 0.107.0 `quotes`)
     // der Titel nennt die Überschrift der Anfrage
     expect(lastModal().titleEl.textContent).toBe("Pseudonymize: \"Mail 7\"");
   });

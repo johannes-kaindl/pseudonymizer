@@ -7,6 +7,7 @@ import {
   type TransformResult,
 } from "../vendor/kit/pseudonymizer-source";
 import type { Engine } from "./engine";
+import { restoreInZones } from "./restore-zones";
 import type { PluginState } from "./status";
 
 const KINDS: ReadonlySet<unknown> = new Set(["text", "line", "filename"]);
@@ -49,9 +50,10 @@ function checkRequest(req: unknown): PseudonymizerApiError | null {
 /** Plugin-API v1 als Hülle (Spec 8.7): prüft Eingaben und Zustand, ruft erst dann die Engine. Wirft nie; Fehler sind Werte.
  *  Die Meldungen nennen nie den Text einer gefangenen Ausnahme oder einen Wert der Anfrage, beides könnte Klartext tragen.
  *  `engine` ist eine Funktion, damit `main.ts` die Engine tauschen kann, ohne die API neu zu setzen.
- *  Grenze (Entscheidung der Planung 2026-11-19, Spec 8.7 unverändert): `restore` setzt auch in Link-Zielen, Bild-URLs und Code zurück; der Aufrufer
- *  verantwortet, wohin der Text danach geht. Die eigenen Flächen des Plugins (Lesesicht, Live Preview, Kopierwege) sind enger und lassen dort Platzhalter stehen
- *  (`core/restore-zones.ts`). Ob `restore` einen optionalen Schalter dafür bekommt, ist offen (Task im Cockpit). */
+ *  Grenze (Spec 8.7, Vorgabe unverändert): `restore` setzt ohne Schalter überall zurück, auch in Link-Zielen, Bild-URLs, HTML-Attributen und Code; der Aufrufer
+ *  verantwortet, wohin der Text danach geht. Mit dem optionalen Feld `skipAddressesAndCode: true` (Entscheidung Johannes 2026-11-20, additiv zu v1) setzt es nur dort zurück,
+ *  wo `transform` ersetzen würde, also in denselben Bereichen wie die eigenen Flächen des Plugins (Lesesicht, Live Preview, Kopierwege; `core/restore-zones.ts`);
+ *  Platzhalter außerhalb bleiben stehen und zählen weder in `unknown` noch in `forgotten`. */
 export function createApi(engine: () => Engine): PseudonymizerApi {
   /** Zustand der Engine; wirft sie, gilt der Zustand als unbekannt (`null`). */
   const stateOf = (): PluginState | null => {
@@ -76,16 +78,21 @@ export function createApi(engine: () => Engine): PseudonymizerApi {
         return { error: "storage-failed", message: "the request could not be completed" };
       }
     },
-    restore(text: string, opts: { caller: string }): RestoreResult | PseudonymizerApiError {
+    restore(text: string, opts: { caller: string; skipAddressesAndCode?: boolean }): RestoreResult | PseudonymizerApiError {
       if (typeof text !== "string") return invalid("text must be a string");
       const caller: unknown = isObject(opts) ? opts.caller : undefined;
       if (!isFilled(caller)) return invalid("caller must be a non-empty string");
+      const skip: unknown = isObject(opts) ? opts.skipAddressesAndCode : undefined;
+      if (skip !== undefined && typeof skip !== "boolean") return invalid("skipAddressesAndCode must be a boolean");
       try {
         const e = engine();
         const state = e.state();
         if (state === "locked") return { error: "locked", message: "the table is locked" };
         if (state !== "ready") return { error: "not-ready", message: "the table is not set up" };
-        return e.restore(text, caller);
+        if (skip !== true) return e.restore(text, caller);
+        const r = restoreInZones(text, (segment) => e.restore(segment, caller));
+        if ("error" in r) return r;
+        return { text: r.text, restored: r.restored, unknown: r.unknown, forgotten: r.forgotten };
       } catch {
         return { error: "not-ready", message: "the text could not be restored" };
       }

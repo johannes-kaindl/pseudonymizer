@@ -213,6 +213,7 @@ class ReviewModal extends Modal {
     buildReviewList(host, {
       items: this.items(),
       strings: listStrings(),
+      quotes: { open: t("modal.review.quote.open"), close: t("modal.review.quote.close") },
       onAction: () => undefined,
       onBulk: () => undefined,
       onWay: (id, way) => {
