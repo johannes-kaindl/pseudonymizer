@@ -1,6 +1,6 @@
 /**
  * GUI-Smoke — fährt die Prüfpunkte aus docs/SMOKE.md gegen ein LAUFENDES Obsidian (CORE-TEST-02 b).
- * Stand: bestätigender Lauf nach N1 bis N6 am 2026-11-19 (52 Punkte, grün; Gegenprobe 52 rot im Lauf davor, `docs/SMOKE.md` § Runs). Fehlersuche: `--stop-nach <Punkt>` hält den Treiber nach einem Punkt an (weiter mit `touch /tmp/pseu-weiter`). Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
+ * Stand: Welle 37 am 2026-11-24 (54 Punkte, grün; Gegenprobe 54 rot, `docs/SMOKE.md` § Runs; neu SU und NF). Fehlersuche: `--stop-nach <Punkt>` hält den Treiber nach einem Punkt an (weiter mit `touch /tmp/pseu-weiter`). Der Treiber misst, was das Plugin von außen zeigt (Befehle, API, Ansicht, Statusleiste) und, seit Aufgabe 11/12,
  * die Gerätedateien: Einrichten (Abbruch, Kontrollkästchen, Datei und Schlüssel), eine fremde Fassung im Ordner, den Reiter „Geräte und Schlüssel“,
  * die Sperre nach gelöschtem Schlüssel und die Code-Eingabe, dazu (Teil b) „Trotzdem einrichten“, Schlüssel ersetzen, Person vergessen (die Gerätedatei auf der Platte
  * wird mit dem Schlüssel im Treiber geöffnet und auf Klartext geprüft) und Gerät entfernen; seit Aufgabe 16 die Lesesicht (Einblenden, Umschalter, Sperren, Vergessen, Kopieren, Kopier-Befehle, Popout, Zug mit der Maus, PDF-Export). Live Preview folgt mit Aufgabe 17.
@@ -54,6 +54,7 @@ const PUNKTE = [
   "R Einrichten bis ready: Weiter erst nach dem Kontrollkästchen, gezeigter Code ist der gespeicherte Schlüssel (Stand 0), eigene Datei und Schlüssel stehen",
   "F Fremde Fassung im Ordner (im Treiber erzeugt, erfundener Name): binnen 60 s gelesen, restore löst ihren Platzhalter auf",
   "G Reiter „Geräte und Schlüssel“: beide Geräte mit Stand und Status Gelesen, Gerätename ändern geht in die Gerätedatei",
+  "SU Suchen mit Klarnamen: bei ausgeschalteter Suche (Kernplugin, `enabled` false) öffnet der Befehl keine Ansicht und die Notice nennt die Kennung; bei eingeschalteter öffnet er Obsidians eigene Suche mit der Anfrage aus den Kennungen; die Anfrage mit zwei Kennungen und jede Kennung einzeln findet die Fixture-Notiz (Treffer an der Trefferliste im DOM), Positivkontrolle trifft, Negativkontrolle trifft nicht, kein Klartext in der Anfrage",
   "L Schlüssel gelöscht: Zustand locked (no-key), Reiter nennt den Ausweg, restore liefert locked",
   "K Code-Eingabe: ein falsches Prüfzeichen speichert nichts und nennt den Grund; der richtige Code macht das Gerät wieder ready",
   "H Einrichten mit vorhandenen Dateien: Abbrechen ändert nichts, „Trotzdem einrichten“ führt zu ready mit neuer Kette, die alte eigene Datei liegt beiseite",
@@ -76,6 +77,7 @@ const PUNKTE = [
   "LP8 Vergessen in der offenen Live Preview: die Stellen der vergessenen Person schalten ohne Neuöffnen auf „vergessen“ (Klasse, doppelte Linie, Tooltip, Text der Platzhalter), kein Klartext von ihr bleibt im DOM, die Stelle der anderen Person bleibt lesbar, Unbekanntes bleibt Text",
   "Z Person vergessen: Wahl, Warndialog mit Werten und Grenzen, danach nennt restore den Platzhalter in forgotten, Stand n+1, die Gerätedatei auf der Platte trägt keinen Klartext der Person",
   "J Vergessen in der offenen Lesesicht: die Stellen der vergessenen Person schalten ohne Neuöffnen auf „vergessen“ (Klasse, Tooltip, kein Klartext im DOM), die der anderen Person bleiben lesbar",
+  "NF Namensfeld in Geräte und Schlüssel: echte Eingabe (Input.insertText) und danach ein echter Mausklick auf „Show recovery code“: das Fenster des Codes öffnet beim ERSTEN Klick, der neue Name steht danach im Reiter und im Modell",
   "D Gerät entfernen: Knopf im Reiter, Warnung bei nicht lesbarer Fassung, danach ist die fremde Datei weg und die eigene bleibt",
   "B1 Prüffenster: ein transform mit interactive true öffnet es; eine Karte je Wert (Name mit zwei Stellen, eine Nummer), Kopfzeile mit Zahlen, die drei Wege als Radiogruppe mit Ersetzen als Vorgabe, „Gehört zu“ ohne Vorschlag auf „niemandem“, Abbrechen links, „übernehmen“ rechts als mod-cta",
   "B2 Abbrechen und Esc (echte Taste): transform liefert cancelled, die Gerätedatei auf der Platte bleibt byte-gleich, ein unbeaufsichtigter transform fragt weiter (deferred)",
@@ -140,6 +142,32 @@ const FREMD_GERAET = "smoke-fremd1";
 const ORDNER = "_pseudonymizer";
 
 interface SchluesselInhalt { chainId: number[]; stand: number; key: number[] }
+
+/** Die eingebaute Suche, wie das DOM sie zeigt: die Anfrage im Suchfeld und die Titel der Trefferdateien. */
+const SUCHE_LESEN = `
+  const leaf = document.querySelector('.workspace-leaf-content[data-type="search"]');
+  if (!leaf) return null;
+  const feld = leaf.querySelector(".search-input-container input");
+  const titel = Array.from(leaf.querySelectorAll(".search-result-file-title .tree-item-inner")).map((e) => e.textContent.trim());
+  return { frage: feld ? feld.value : null, titel };
+`;
+interface SucheStand { frage: string | null; titel: string[] }
+/** Öffnet die Suche mit `frage` über denselben Zugang wie das Plugin (`internalPlugins … openGlobalSearch`) und liest die Trefferliste, sobald sie zweimal gleich war. */
+async function sucheMessen(cdp: Cdp, frage: string): Promise<SucheStand | null> {
+  const offen = await cdp.evaluate<boolean>(`const i = app.internalPlugins.getPluginById("global-search"); if (!i || !i.instance || typeof i.instance.openGlobalSearch !== "function") return false; i.instance.openGlobalSearch(${q(frage)}); return true;`);
+  if (!offen) return null;
+  await new Promise((r) => setTimeout(r, 1500));
+  let letzte = "";
+  for (let i = 0; i < 20; i++) {
+    const jetzt = await cdp.evaluate<SucheStand | null>(SUCHE_LESEN);
+    const text = q(jetzt);
+    if (jetzt && jetzt.frage === frage && text === letzte) return jetzt;
+    letzte = text;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return cdp.evaluate<SucheStand | null>(SUCHE_LESEN);
+}
+const SUCHE_ZU = `for (const l of app.workspace.getLeavesOfType("search")) l.detach(); if (app.workspace.leftSplit && !app.workspace.leftSplit.collapsed) app.workspace.leftSplit.collapse(); return true;`;
 
 async function klickeKnopf(cdp: Cdp, text: string): Promise<boolean> {
   return clickReal(cdp, MODAL_BTN(text));
@@ -677,6 +705,8 @@ async function main(): Promise<void> {
       await cdp.evaluate(SCHLIESSE_NOTIZEN);
       await cdp.evaluate(LOESCHE_SMOKE_NOTIZEN);
       await cdp.evaluate(SCHALTER_ZURUECK);
+      await cdp.evaluate(SUCHE_ZU);
+      await cdp.evaluate(`if (window.__pseuSucheAn) { await app.internalPlugins.getPluginById("global-search").disable(true); delete window.__pseuSucheAn; } return true;`);
       await cdp.evaluate(ZWISCHENABLAGE_AUS);
       await cdp.evaluate(`if (window.__pseuSaveOrig) { window.require("electron").remote.dialog.showSaveDialog = window.__pseuSaveOrig; delete window.__pseuSaveOrig; } return true;`);
       await cdp.send("Network.disable");
@@ -853,6 +883,58 @@ async function main(): Promise<void> {
       zweiLesbar && nurEinKnopf && nameGesetzt && Boolean(namenImModell),
       `Zeilen=${q(zeilen)}, Name gesetzt=${nameGesetzt}, Name im Modell=${Boolean(namenImModell)}`);
     await cdp.evaluate(`for (const l of app.workspace.getLeavesOfType("pseudonymizer-view")) l.detach(); return true;`);
+
+    // --- SU ---
+    console.log("\nSU · Suchen mit Klarnamen");
+    // Der Befehl selbst: Name eingeben (echte Eingabe), „Search“ klicken; die Anfrage im Suchfeld trägt nur die Kennung, nie den Namen.
+    await cdp.evaluate(SUCHE_ZU);
+    const SU_ENABLED = `const i = app.internalPlugins.getPluginById("global-search"); return i ? i.enabled : "kein Plugin";`;
+    const suEnabledAus = await cdp.evaluate<unknown>(SU_ENABLED);
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:search-plaintext`)}); return true;`);
+    const suDialog = await pollUntil<string>(cdp, `const t = document.querySelector(".modal .modal-title"); return t && t.textContent.trim() === "Search by plain name" && document.querySelector(".modal input") ? t.textContent.trim() : null;`, 8000, 200);
+    if (suDialog) {
+      await cdp.evaluate(`const i = document.querySelector(".modal input"); i.focus(); i.select(); return true;`);
+      await cdp.send("Input.insertText", { text: "Max Mustermann" });
+    }
+    const suKlick = suDialog ? await klickeKnopf(cdp, "Search") : false;
+    const suLage = await cdp.evaluate<{ modal: string | null; notices: string[]; leaves: string[]; intern: boolean }>(`
+      const m = document.querySelector(".modal .modal-title"); const i = app.internalPlugins && app.internalPlugins.getPluginById ? app.internalPlugins.getPluginById("global-search") : null;
+      const leaves = []; app.workspace.iterateAllLeaves((l) => leaves.push(l.view.getViewType()));
+      return { modal: m ? m.textContent.trim() : null, notices: Array.from(document.querySelectorAll(".notice")).map((n) => n.textContent), leaves, intern: Boolean(i && i.instance && typeof i.instance.openGlobalSearch === "function") };
+    `);
+    // Die Suche (Kernplugin) ist im Staging-Vault aus: der Befehl meldet trotzdem Erfolg und öffnet nichts (Befund). Danach wird sie eingeschaltet und der Befehl noch einmal gefahren.
+    const suNotice = suKlick ? await pollUntil<string>(cdp, NOTICE_MIT("could not be opened"), 4000, 200) : null;
+    const suLageAus = await cdp.evaluate<{ leaves: string[]; notices: string[] }>(`const leaves = []; app.workspace.iterateAllLeaves((l) => leaves.push(l.view.getViewType())); return { leaves, notices: Array.from(document.querySelectorAll(".notice")).map((n) => n.textContent) };`);
+    const suAus = { ansichten: suLageAus.leaves.filter((v) => v === "search").length, notices: suLageAus.notices };
+    await clearNotices(cdp);
+    await cdp.evaluate(`window.__pseuSucheAn = true; await app.internalPlugins.getPluginById("global-search").enable(true); return true;`);
+    const suEnabledAn = await cdp.evaluate<unknown>(SU_ENABLED);
+    await cdp.evaluate(`app.commands.executeCommandById(${q(`${PLUGIN_ID}:search-plaintext`)}); return true;`);
+    const suDialog2 = await pollUntil<string>(cdp, `const t = document.querySelector(".modal .modal-title"); return t && t.textContent.trim() === "Search by plain name" && document.querySelector(".modal input") ? t.textContent.trim() : null;`, 8000, 200);
+    if (suDialog2) {
+      await cdp.evaluate(`const i = document.querySelector(".modal input"); i.focus(); i.select(); return true;`);
+      await cdp.send("Input.insertText", { text: "Max Mustermann" });
+    }
+    const suKlick2 = suDialog2 ? await klickeKnopf(cdp, "Search") : false;
+    const suBefehl = suKlick2 ? await pollUntil<SucheStand>(cdp, SUCHE_LESEN, 10_000, 400) : null;
+    await new Promise((r) => setTimeout(r, 1500));
+    const suBefehlStand = suBefehl ? await cdp.evaluate<SucheStand | null>(SUCHE_LESEN) : null;
+    const suKennung = FREMD_ID;
+    const suBefehlOk = suBefehlStand !== null && suBefehlStand.frage === `"${suKennung}"` && !/Mustermann/.test(suBefehlStand.frage ?? "") && suBefehlStand.titel.includes("Call notes");
+    // Die Anfrage mit zwei Kennungen (zusammengeführter Eintrag) und jede Kennung einzeln, dazu Positiv- und Negativkontrolle.
+    const SU_NOTIZ = "Call notes";
+    const suZwei = await sucheMessen(cdp, `"${suKennung}" OR "h7n2p5r8st"`);
+    const suEins = await sucheMessen(cdp, `"${suKennung}"`);
+    const suZweite = await sucheMessen(cdp, `"h7n2p5r8st"`);
+    const suPositiv = await sucheMessen(cdp, `"call you back"`);
+    const suNegativ = await sucheMessen(cdp, `"zz9q8w7e6r"`);
+    await cdp.evaluate(SUCHE_ZU);
+    await clearNotices(cdp);
+    const trifft = (x: SucheStand | null): boolean => x !== null && x.titel.includes(SU_NOTIZ);
+    record("SU Suchen mit Klarnamen: bei ausgeschalteter Suche (Kernplugin, `enabled` false) öffnet der Befehl keine Ansicht und die Notice nennt die Kennung; bei eingeschalteter öffnet er Obsidians eigene Suche mit der Anfrage aus den Kennungen; die Anfrage mit zwei Kennungen und jede Kennung einzeln findet die Fixture-Notiz (Treffer an der Trefferliste im DOM), Positivkontrolle trifft, Negativkontrolle trifft nicht, kein Klartext in der Anfrage",
+      Boolean(suDialog) && suKlick && suEnabledAus === false && suEnabledAn === true && suAus.ansichten === 0 && suNotice !== null && suNotice.includes(`"${suKennung}"`) && !/Mustermann/.test(suNotice)
+        && Boolean(suDialog2) && suKlick2 && suBefehlOk && trifft(suZwei) && trifft(suEins) && trifft(suZweite) && trifft(suPositiv) && suNegativ !== null && suNegativ.titel.length === 0,
+      `Befehl: Anfrage=${q(suBefehlStand?.frage)}, Treffer=${q(suBefehlStand?.titel)}; zwei Kennungen: Anfrage=${q(suZwei?.frage)} Treffer=${q(suZwei?.titel)}; ${suKennung}: ${q(suEins?.titel)}; h7n2p5r8st: ${q(suZweite?.titel)}; Positivkontrolle: ${q(suPositiv?.titel)}; Negativkontrolle (Kennung, die nirgends steht): ${suNegativ ? suNegativ.titel.length : "nicht gelesen"} Treffer; Suche aus (enabled=${q(suEnabledAus)}): Befehl lief (Dialog=${q(suDialog)}, Klick=${suKlick}), Suchansichten danach=${suAus.ansichten}, Notice=${q(suNotice)}; Suche an (enabled=${q(suEnabledAn)})`);
 
     // --- L ---
     console.log("\nL · Schlüssel gelöscht");
@@ -1962,6 +2044,43 @@ async function main(): Promise<void> {
       groesse(bildPersonen) > 5000 && groesse(bildAusnahmen) > 5000 && flaechen.length >= 4 && flaechen.every((h) => h >= 44),
       `Personen=${bildPersonen} (${groesse(bildPersonen)} B), Ausnahmen=${bildAusnahmen} (${groesse(bildAusnahmen)} B), Höhen am Telefon (Kopf, Zusammenführen, Vergessen, Wert abhängen ×3, Suchfeld)=${q(flaechen)} (nachgestellt, kein echtes Telefon)`);
     await cdp.evaluate(ZEIGE_REITER("devices"));
+
+    // --- NF ---
+    console.log("\nNF · Namensfeld, erster Klick");
+    await cdp.evaluate(ZEIGE_REITER("devices"));
+    const NF_FELD = `document.querySelector(".pseu-devices-panel .setting-item input[type=text]")`;
+    const NF_KNOPF = `(Array.from(document.querySelectorAll(".pseu-devices-panel .pseu-devices-actions button")).find((b) => b.textContent.trim() === "Show recovery code") || null)`;
+    const nfFeld = await pollUntil<boolean>(cdp, `return Boolean(${NF_FELD}) || null;`, 8000, 250);
+    /** Ins Feld klicken (echt), den Namen tippen (echt) und mit EINEM echten Mausklick (Haltedauer `halten` ms) auf den Knopf weitergehen: blur kommt beim mousedown, das Neuzeichnen darf den Knopf vor seinem click nicht austauschen. */
+    const nfVersuch = async (name: string, halten: number): Promise<{ fokus: boolean; klick: boolean; dialog: string | null; knopfDa: boolean | null }> => {
+      const fokus = await clickReal(cdp, NF_FELD);
+      if (!fokus) return { fokus, klick: false, dialog: null, knopfDa: null };
+      await cdp.evaluate(`const i = ${NF_FELD}; i.focus(); i.select(); return true;`);
+      await cdp.send("Input.insertText", { text: name });
+      await cdp.evaluate(`window.__nfKnopf = ${NF_KNOPF}; return true;`);
+      const klick = await clickReal(cdp, NF_KNOPF, halten);
+      const dialog = klick ? await pollUntil<string>(cdp, `const t = document.querySelector(".modal .modal-title"); return t && t.textContent.trim() === "Recovery code" ? t.textContent.trim() : null;`, 5000, 200) : null;
+      const knopfDa = await cdp.evaluate<boolean | null>(`return window.__nfKnopf ? window.__nfKnopf.isConnected : null;`);
+      await schliesseDialog(cdp);
+      // Nach dem Versuch sicher aus dem Feld heraus, damit das Neuzeichnen nachgeholt ist.
+      await cdp.evaluate(`if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); return true;`);
+      await new Promise((r) => setTimeout(r, 500));
+      return { fokus, klick, dialog, knopfDa };
+    };
+    const nf = nfFeld ? await nfVersuch("Mac Treiber", 150) : null;
+    const nfName = nf?.dialog ? await pollUntil<{ feld: string; modell: string }>(cdp, `
+      const p = ${P};
+      const i = ${NF_FELD};
+      const own = p ? p.devicesModel().rows.find((r) => r.own) : null;
+      return i && own && own.name === "Mac Treiber" && i.value === "Mac Treiber" ? { feld: i.value, modell: own.name } : null;
+    `, 8000, 300) : null;
+    // Nur zur Einordnung (zählt nicht): derselbe Ablauf mit kürzerer Haltedauer des Klicks.
+    const nf60 = nfFeld ? await nfVersuch("Mac Treiber 60", 60) : null;
+    const nf0 = nfFeld ? await nfVersuch("Mac Treiber 0", 0) : null;
+    record("NF Namensfeld in Geräte und Schlüssel: echte Eingabe (Input.insertText) und danach ein echter Mausklick auf „Show recovery code“: das Fenster des Codes öffnet beim ERSTEN Klick, der neue Name steht danach im Reiter und im Modell",
+      Boolean(nfFeld) && Boolean(nf?.fokus) && Boolean(nf?.klick) && Boolean(nf?.dialog) && Boolean(nfName),
+      `Feld da=${Boolean(nfFeld)}, Haltedauer 150 ms: ${q(nf)}, Name im Feld=${q(nfName?.feld)}, im Modell=${q(nfName?.modell)}; zur Einordnung Haltedauer 60 ms: ${q(nf60)}, 0 ms: ${q(nf0)} (knopfDa=false: der Knopf wurde zwischen Drücken und Loslassen ausgetauscht)`);
+    await clearNotices(cdp);
 
     // --- D ---
     console.log("\nD · Gerät entfernen");
