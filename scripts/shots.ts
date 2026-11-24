@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { cwd } from "node:process";
 
 import { parseArgs, runDriver } from "../../tools/obsidian-cdp/bilanz.js";
-import { Cdp, attachTo, bereiteInstanzVor, clearNotices, clickReal, pollUntil, requireVisible } from "../../tools/obsidian-cdp/cdp.js";
+import { Cdp, attachTo, bereiteInstanzVor, clearNotices, clickReal, pollUntil, requireUntil, requireVisible } from "../../tools/obsidian-cdp/cdp.js";
 import { boxOf, capture, quetschen, scaleTo, setWindowSize } from "../../tools/obsidian-cdp/shot.js";
 import { buildVault, requireEigenerBuild, stagingVaultDir } from "../../tools/obsidian-cdp/vault.js";
 import { encodePayload } from "../src/core/payload.js";
@@ -160,7 +160,7 @@ const bilder: Bild[] = [
       const bereit = await pollUntil<boolean>(cdp, `const p = document.querySelector(".pseu-root .pseu-panel"); return p && p.querySelectorAll(".pseu-person").length >= 2 ? true : null;`, 10_000, 300);
       if (!bereit) return null;
       await clickReal(cdp, `(Array.from(document.querySelectorAll(".pseu-root .pseu-person")).find((li) => li.querySelector(".pseu-person-label").textContent.trim() === "Anna Probe")?.querySelector(".pseu-person-head") || null)`);
-      await pollUntil<boolean>(cdp, `return document.querySelector(".pseu-root .pseu-person.is-open") ? true : null;`, 5000, 250);
+      await requireUntil(cdp, `document.querySelector(".pseu-root .pseu-person.is-open") !== null`, "persons.png: Eintrag „Anna Probe“ klappt nicht auf", 5000, 250);
       await new Promise((r) => setTimeout(r, 500));
       return { clip: await inhaltsClip(cdp), scale: 2 };
     },
@@ -174,7 +174,7 @@ const bilder: Bild[] = [
       if (!bereit) return null;
       // Gerätename ändern wie ein Nutzer: ins Feld schreiben, `change` auslösen.
       await cdp.evaluate(`const i = document.querySelector(".pseu-devices-panel .setting-item input[type=text]"); if (!i) return false; i.focus(); i.value = "Desktop"; i.dispatchEvent(new Event("change", { bubbles: true })); i.blur(); return true;`);
-      await pollUntil<boolean>(cdp, `const o = ${P}.devicesModel().rows.find((r) => r.own); return o && o.name === "Desktop" ? true : null;`, 8000, 300);
+      await requireUntil(cdp, `${P}.devicesModel().rows.find((r) => r.own)?.name === "Desktop"`, "devices.png: eigener Gerätename steht nicht auf „Desktop“", 8000, 300);
       await new Promise((r) => setTimeout(r, 500));
       return { clip: await inhaltsClip(cdp), scale: 2 };
     },

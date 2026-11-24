@@ -1,7 +1,7 @@
 {
   "source": "obsidian-kit",
-  "version": "0.107.0",
-  "sha": "9c7d9f3",
+  "version": "0.108.0",
+  "sha": "0fa2b5a",
   "vendored": "choice-modal.ts, clipboard.ts, confirm.ts, device-files.ts, file-snapshot.ts, folder-suggest.ts, help-setting.ts, hub.ts, prompt-text.ts, redline.ts, redline-strings.ts, replace-file-safely.ts, review-list.ts, secrets.ts, segmented-control.ts, status-bar-item.ts, status-indicator.ts, text-swap.ts, text-swap-editor.ts, write-ports.ts",
   "license": "AGPL-3.0-or-later"
 }

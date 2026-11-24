@@ -1,4 +1,4 @@
-// vendored from obsidian-kit@0.107.0, src/obsidian/device-files.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from obsidian-kit@0.108.0, src/obsidian/device-files.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 // Gerätedateien-Ablage (Welle 36, kp1b, Teil D; Bestellung 10 der Design-Linie pseudonymizer, Spec 2026-11-18 § 8.2 und § 8.3 mit dem Nachtrag des Bestellers).
 //
 // Vertragssatz: Je Gerät eine Datei in einem Vault-Ordner. Nur das eigene Gerät schreibt seine Datei; gelesen werden alle. Ein abgebrochener Schreibvorgang zerstört die letzte gute Fassung nicht. Der Baustein

@@ -1,4 +1,4 @@
-// vendored from obsidian-kit@0.107.0, src/obsidian/text-swap-editor.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from obsidian-kit@0.108.0, src/obsidian/text-swap-editor.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 // Inline-Ersatz in Live Preview (Welle 36, kp1c, Bestellung 12 der Design-Linie pseudonymizer, Spec 2026-11-18 § 8.6): eine CodeMirror-Erweiterung ersetzt Fundstellen mitten in der Zeile durch ein Widget,
 // rechnet nur den sichtbaren Bereich und zeigt den Quelltext, sobald Cursor oder Auswahl die Stelle berühren. Das Dokument wird nie geändert; Kopieren liefert den Dateitext (CodeMirror kopiert aus dem
 // Zustand, nicht aus dem Widget).

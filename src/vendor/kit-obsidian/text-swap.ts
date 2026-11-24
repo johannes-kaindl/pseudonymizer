@@ -1,4 +1,4 @@
-// vendored from obsidian-kit@0.107.0, src/obsidian/text-swap.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from obsidian-kit@0.108.0, src/obsidian/text-swap.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 // Textersatz in der Lesesicht (Welle 36, kp1c, Bestellung 11 der Design-Linie pseudonymizer, Spec 2026-11-18 § 8.6): ein Markdown-Postprozessor ersetzt Fundstellen in Textknoten durch ein Element,
 // das beide Fassungen kennt (Platzhalter und Klartext) und ohne Neuaufbau zwischen ihnen umschaltet; dazu ein Kopier-Handler, der die Fassung der Zwischenablage bestimmt.
 //
