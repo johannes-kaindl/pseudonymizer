@@ -20,9 +20,11 @@
 //  - die Endung (ab dem letzten Punkt, wenn danach nur Buchstaben und Ziffern bis zu fünf Zeichen folgen) wird nie ersetzt und nie gelesen;
 //  - `_` und `-` trennen beim Lesen wie ein Leerzeichen (`Rechnung_max@example.org.pdf` und `Rechnung-max@example.org.pdf` tragen dieselbe Adresse);
 //  - steht neben einer ersetzten Stelle ein Unterstrich, wird dieser Unterstrich ein Bindestrich (sonst wäre der Platzhalter ein Teil eines längeren Wortes).
-// Grenzen: Der Rückweg stellt `Rechnung-max@example.org.pdf` her, nicht byte-gleich zu `Rechnung_max@example.org.pdf`. Eine Adresse mit Bindestrich im lokalen Teil
-// (`max-muster@example.org`) wird im Dateinamen ab dem letzten Bindestrich gelesen: der vordere Teil bleibt stehen, außer die ganze Adresse ist bekannt (dann ist sie im Dateinamen
-// ebenfalls nicht zu finden, weil der Bindestrich trennt). Ein Dateiname ist keine Markdown-Zeile: Links, Tags und Code werden dort nicht geschützt.
+//  - ein bekannter Wert, ein Wert aus dem Mail-Kopf und ein `keep`-Wert mit `_` oder `-` (`Hans-Peter Muster`, `max-muster@example.org`) wird zusätzlich in seiner Dateinamenform gesucht
+//    und auf den Wert der Tabelle zurückgeführt (Welle 37).
+// Grenzen: Der Rückweg stellt `Rechnung-max@example.org.pdf` her, nicht byte-gleich zu `Rechnung_max@example.org.pdf`. Eine UNBEKANNTE Adresse mit Bindestrich im lokalen Teil
+// (`max-muster@example.org`, weder in der Tabelle noch im Mail-Kopf) erkennt der Erkenner im Dateinamen ab dem letzten Bindestrich: der vordere Teil bleibt stehen. Ein Dateiname ist keine
+// Markdown-Zeile: Links, Tags und Code werden dort nicht geschützt.
 //
 // Benannte Lücken (Spec 8.4): Ein Dritter mitten im Satz ohne Anrede („die Kollegin Schmidt“) wird nicht gefunden. Wer in `keep` steht, wird nur geschützt, wenn er als eigene Fundstelle auftaucht
 // oder als Wort im Text steht; Einträge der Ausnahmeliste und „hier lassen“ sperren nur die Fundstelle, die sie selbst treffen. Eine Fundstelle in einem Wikilink-Ziel (`[[Max Mustermann]]`) bleibt stehen
@@ -286,7 +288,8 @@ function mayStart(view: string, i: number, set: FormSet): boolean {
   return false;
 }
 
-function scanForms(view: string, set: FormSet): ScanHit[] {
+/** `filename`: die Sicht eines Dateinamens, in der `_` und `-` Leerzeichen sind; dort darf eine Mail-Form Leerzeichen tragen (ihre Dateinamenform, `max muster@example.org`). */
+function scanForms(view: string, set: FormSet, filename = false): ScanHit[] {
   const out: ScanHit[] = [];
   const n = view.length;
   if (set.map.size === 0) return out;
@@ -309,7 +312,7 @@ function scanForms(view: string, set: FormSet): ScanHit[] {
         tested++;
         const sub = view.slice(i, j);
         for (const field of SCAN_FIELDS) {
-          if (field === "mail" && sub.includes(" ")) continue;
+          if (field === "mail" && !filename && sub.includes(" ")) continue;
           const tag = set.map.get(formKey(field, normalizeTableValue(field, sub)));
           if (tag !== undefined && boundaryOk(view, i, j, field)) out.push({ start: i, end: j, field, tag, text: sub });
         }
@@ -390,12 +393,25 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
   // Im Dateinamen trennen `_` und `-` wie ein Leerzeichen (`viewOf`): ein `keep`-Wert mit Bindestrich (`max-muster@example.org`) wäre dort nie zu finden, und sein hinterer Teil würde Kandidat (K2b).
   // Darum steht er zusätzlich in seiner Dateinamenform als Sperre, aber nur in der Formenliste der Dateinamen-Teile: in Text und Zeilen sperrte `Max Muster` sonst einen bekannten Wert, der nicht in `keep` steht (N4).
   const filenameAdds: { field: ScanField; text: string; tag: Tag }[] = [];
-  if (req.parts.some((p) => p.kind === "filename")) {
+  const hasFilename = req.parts.some((p) => p.kind === "filename");
+  if (hasFilename) {
     for (const k of req.keep ?? []) {
       const asName = k.replace(/[_-]/g, " ");
       if (asName !== k) for (const f of SCAN_FIELDS) filenameAdds.push({ field: f, text: asName, tag: "keep" });
     }
   }
+  // Dasselbe für bekannte Werte und Werte aus dem Mail-Kopf (Welle 37, Stichprobe zur Task „Adressen mit Bindestrich im Dateinamen“): `Hans-Peter Muster` und `max-muster@example.org`
+  // stünden im Dateinamen sonst als Klartext, ohne Kandidat. Ihre Dateinamenform steht nur in der Formenliste der Dateinamen-Teile, und ein Treffer wird auf den Wert der Tabelle
+  // zurückgeführt (`filenameOriginal`), damit er seinen Platzhalter findet.
+  const filenameOriginal = new Map<string, string>();
+  const filenameKey = (field: PlaceholderField | null, text: string): string => `${field ?? ""}|${normalizeTableValue(field, text)}`;
+  const addFilenameForm = (a: { field: ScanField; text: string; tag: Tag }): void => {
+    if (!hasFilename || a.tag === "keep") return;
+    const asName = a.text.replace(/[_-]/g, " ");
+    if (asName === a.text) return;
+    filenameAdds.push({ field: a.field, text: asName, tag: a.tag });
+    filenameOriginal.set(filenameKey(a.field, asName), a.text);
+  };
 
   // Die Werte aus dem Mail-Kopf: Teil der Suche (auch wo kein Erkenner anschlägt) und, wenn unbekannt, offene Kandidaten.
   const entities: PlannedEntity[] = [];
@@ -422,6 +438,7 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
     for (const a of list) addForm(set, a.field, a.text, a.tag);
     return set;
   };
+  for (const a of adds) addFilenameForm(a);
   const forms = buildForms(adds);
   const filenameForms = filenameAdds.length > 0 ? buildForms([...adds, ...filenameAdds]) : forms;
 
@@ -443,12 +460,13 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
     const hits: Hit[] = [];
     const push = (start: number, end: number, field: PlaceholderField | null, kind: CandidateKind, rank: number, confidence: number, tag: Tag | null, owner: string | null = null): void => {
       if (end <= start || !inside(ranges, start, end)) return;
-      const text = view.slice(start, end);
+      const seen = view.slice(start, end);
+      const text = part.kind === "filename" ? (filenameOriginal.get(filenameKey(field, seen)) ?? seen) : seen;
       const placeholder = lookup(field, text);
       const kept = tag === "keep" || keep(field, text);
       hits.push({ start, end, text, field, kind, rank: kept ? RANK_KEPT : placeholder !== null ? RANK_KNOWN : rank, kept, placeholder: kept ? null : placeholder, confidence, owner });
     };
-    for (const h of scanForms(view, part.kind === "filename" ? filenameForms : forms)) {
+    for (const h of part.kind === "filename" ? scanForms(view, filenameForms, true) : scanForms(view, forms)) {
       const field = h.field;
       push(h.start, h.end, field, kindOfField(field), RANK_ENTITY, CONFIDENCE.high, h.tag);
     }

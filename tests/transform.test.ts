@@ -282,6 +282,30 @@ describe("Dateinamen", () => {
     expect(out.replace(`${P}_Mail`, "max@example.org")).toBe("Rechnung-max@example.org.pdf");
   });
 
+  describe("bekannte Werte mit Bindestrich (Welle 37, Stichprobe „Adressen mit Bindestrich im Dateinamen“)", () => {
+    const hyphenTable = (): PlaceholderTable => withValue(withValue(sampleTable(), PERSON, "mail", "max-muster@example.org"), PERSON, null, "Hans-Peter Muster");
+    it.each([
+      ["Rechnung_max-muster@example.org.pdf", `Rechnung-${P}_Mail_2.pdf`],
+      ["max-muster@example.org.pdf", `${P}_Mail_2.pdf`],
+      ["Rechnung max-muster@example.org.pdf", `Rechnung ${P}_Mail_2.pdf`],
+      ["Hans-Peter_Muster_Vertrag.pdf", `${P}_3-Vertrag.pdf`],
+      ["Vertrag Hans-Peter Muster.pdf", `Vertrag ${P}_3.pdf`],
+      ["Hans-Peter-Muster.pdf", `${P}_3.pdf`],
+    ])("%s: ganz ersetzt, kein Rest im Klartext, kein Kandidat", (name, expected) => {
+      const r = req([part("a", name, "filename")]);
+      expect(plan(r, hyphenTable()).candidates).toEqual([]);
+      expect(known(r, hyphenTable())[0]).toBe(expected);
+    });
+    it("ein Wert aus dem Mail-Kopf mit Bindestrich wird im Dateinamen als ganzer Wert Kandidat", () => {
+      const r = req([part("a", "Rechnung_erika-muster@example.org.pdf", "filename")], { entities: [{ email: "erika-muster@example.org" }] });
+      expect(values(plan(r, emptyTable()))).toContain("erika-muster@example.org");
+      expect(values(plan(r, emptyTable()))).not.toContain("muster@example.org");
+    });
+    it("in Text und Zeilen bleibt die Bindestrich-Form die einzige: „Hans Peter Muster“ ist dort kein bekannter Wert", () => {
+      expect(one("Hans Peter Muster", "line", hyphenTable())).toBe("Hans Peter Muster");
+    });
+  });
+
   it("ein Dateiname ohne Fund bleibt, wie er ist", () => {
     expect(filename("Scan_0001.pdf")).toBe("Scan_0001.pdf");
   });
