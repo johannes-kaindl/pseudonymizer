@@ -234,6 +234,20 @@ async function main(): Promise<void> {
       await new Promise((r) => setTimeout(r, 400));
       await cdp.evaluate(SCHLIESSE_ANSICHT);
     }
+    // Zusatz (nie im Repo): das Prüffenster im dunklen Theme in einen Wegwerfordner, um die Treffermarke dort zu prüfen (`--dunkel <Ordner>`).
+    const dunkel = args.value("dunkel");
+    if (dunkel) {
+      mkdirSync(dunkel, { recursive: true });
+      await cdp.evaluate(`if (app.changeTheme) app.changeTheme("obsidian"); document.body.classList.replace("theme-light", "theme-dark"); return document.body.classList.contains("theme-dark");`);
+      await new Promise((r) => setTimeout(r, 800));
+      const review = bilder.find((b) => b.name === "review.png");
+      const r = review ? await review.run(cdp) : null;
+      if (r && r.clip) {
+        writeFileSync(join(dunkel, "review-dunkel.png"), quetschen(await scaleTo(cdp, await capture(cdp, r.clip, r.scale), CAPTURE_WIDTH)));
+        console.log(`  ✓ review-dunkel.png (Wegwerfordner ${dunkel})`);
+      } else { console.log("  ✗ review-dunkel.png: Zustand nicht erreicht"); fehler += 1; }
+      await cdp.evaluate(`const b = ${MODAL_BTN("Cancel")}; if (b) b.click(); return true;`);
+    }
     await cdp.evaluate(`${P}.keys.clear(); return true;`);
   } finally {
     cdp.close();
