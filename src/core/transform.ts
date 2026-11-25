@@ -208,11 +208,11 @@ function stemEnd(name: string): number {
   const ext = name.slice(dot + 1);
   if (ext.length < 1 || ext.length > 5) return name.length;
   for (let i = 0; i < ext.length; i++) if (!/[A-Za-z0-9]/.test(ext.charAt(i))) return name.length;
-  // `max@example.org` ohne Endung: der letzte Punkt gehört zur Adresse, wenn hinter dem `@` bis zu ihm kein weiterer Punkt und kein Trenner steht.
+  // `max@example.org` ohne Endung: der letzte Punkt gehört zur Adresse, wenn hinter dem `@` bis zu ihm kein weiterer Punkt, kein Leerzeichen und kein Unterstrich steht (ein Bindestrich darf: `max@example-firma.org`).
   const at = name.lastIndexOf("@", dot);
   if (at >= 0) {
     const domain = name.slice(at + 1, dot);
-    if (domain !== "" && !/[ ._-]/.test(domain)) return name.length;
+    if (domain !== "" && !/[ ._]/.test(domain)) return name.length;
   }
   return dot;
 }
@@ -377,38 +377,82 @@ interface Hit { start: number; end: number; text: string; field: PlaceholderFiel
 
 const kindOfField = (f: PlaceholderField | null): CandidateKind => (f === null ? "person" : f);
 
-/** Ein Zeichen, das im Dateinamen noch zum lokalen Teil einer Adresse gelesen wird: Buchstaben (auch Umlaute) und Ziffern, `_` und die Zeichen `.%+-` des Kit-Musters. */
-const LOCAL_CHAR = /^[\p{L}\p{N}_.%+-]$/u;
+/** Ein Zeichen, das im Dateinamen noch zum lokalen Teil einer Adresse gelesen wird: Buchstaben (auch Umlaute, auch zerlegt mit Zeichen `\p{M}`), Ziffern, `'`, `_` und die Zeichen `.%+-` des Kit-Musters. */
+const LOCAL_CHAR = /^[\p{L}\p{M}\p{N}'_.%+-]$/u;
+/** Ein Zeichen des Wortes direkt vor dem `@` (ohne Trenner): es gehört immer zur Adresse, auch wenn dort eine bekannte Form steht (`max` in `hans-max@example.org`). */
+const SEGMENT_CHAR = /^[\p{L}\p{M}\p{N}']$/u;
 /** Am Anfang des gierigen Werts nicht mitgenommen: ein Trenner bleibt im Dateinamen stehen. */
-const LOCAL_LEAD = /^[._%+-]$/;
+const LOCAL_LEAD = /^['._%+-]$/;
+
+/** Wie viele Stellen in `[0, i)` von mindestens einer Spanne bedeckt sind (Präfixsumme, linear über Differenzen); `c[e] - c[s] > 0` heißt: in `[s, e)` liegt eine bedeckte Stelle. */
+function coverage(n: number, spans: readonly TextRange[]): Int32Array {
+  const diff = new Int32Array(n + 1);
+  for (const s of spans) {
+    const a = Math.max(0, Math.min(s.start, n));
+    const b = Math.max(0, Math.min(s.end, n));
+    if (b <= a) continue;
+    diff[a] = (diff[a] ?? 0) + 1;
+    diff[b] = (diff[b] ?? 0) - 1;
+  }
+  const c = new Int32Array(n + 1);
+  let run = 0;
+  for (let i = 0; i < n; i++) {
+    run += diff[i] ?? 0;
+    c[i + 1] = (c[i] ?? 0) + (run > 0 ? 1 : 0);
+  }
+  return c;
+}
+const covered = (c: Int32Array, s: number, e: number): boolean => (c[e] ?? 0) - (c[s] ?? 0) > 0;
 
 /**
- * `filename`: die Adressen, gierig gelesen (Entscheidung Johannes 2026-11-25). Das Mail-Muster des Kits läuft auf dem rohen Stamm, in dem `-` und `_` stehen, wie sie stehen: beide sind dort
- * Zeichen des lokalen Teils (`[A-Z0-9._%+-]`), also wird `Rechnung-max-muster@example.org` und `Rechnung_max-muster@example.org` als Ganzes gelesen, nicht ab dem letzten Trenner. Danach läuft der Anfang
- * über weitere Buchstaben (auch Umlaute, die das ASCII-Muster nicht kennt) bis zu einem Leerzeichen, einem anderen Zeichen oder dem Rand des ersetzbaren Bereichs (ein Platzhalter im Namen wird nie
- * mitgenommen); ein Trenner am Anfang bleibt stehen. Vorrang: Berührt die gierige Fassung einen Treffer der Formenliste mit Feld `mail` (bekannt, aus dem Mail-Kopf, `keep`), entfällt sie, und der
- * Wert der Tabelle gewinnt wie bisher. Zurück kommen nur Fassungen, die länger sind als ein Fund der Sicht (sonst trägt der schon dieselbe Stelle); der längere gewinnt dann in `applyEdits`.
+ * `filename`: die Adressen, gierig gelesen (Entscheidung Johannes 2026-11-25). Ausgangspunkt ist jedes `@` eines Mail-Funds, aus dem Kit-Muster auf dem rohen Stamm (dort sind `-` und `_` Zeichen des
+ * lokalen Teils, `[A-Z0-9._%+-]`, und eine Domain mit Bindestrich wird gelesen) oder aus der Sicht (eine zweite Adresse direkt hinter einer ersten). Vom `@` läuft der Anfang nach links: erst über das
+ * Wort direkt davor (immer Teil der Adresse), dann über Buchstaben, Ziffern und `'_.%+-`, bis zu einem Leerzeichen, einem anderen Zeichen, dem Rand des ersetzbaren Bereichs (ein Platzhalter wird nie
+ * mitgenommen), dem Ende des vorigen Funds oder einer Stelle, die ein Treffer der Formenliste oder ein anderer Fund der Sicht trägt (`stops`: ein Name oder eine Nummer davor bleibt ein eigener Treffer und wird nie Teil eines
+ * Mail-Werts, sonst überlebte er das Vergessen im Wert einer anderen Zeile). Ein Trenner am Anfang bleibt stehen.
+ * Vorrang: Berührt die gierige Fassung einen Treffer der Formenliste mit Feld `mail` (bekannt, Mail-Kopf, `keep`) oder einen Mail-Fund der Sicht, der bekannt oder bewahrt ist (`held`: Tabelle,
+ * Ausnahmeliste, „hier lassen“, `keep`), entfällt sie, und es gilt, was ohne sie gälte. Zurück kommen nur Fassungen, die kein Fund der Sicht schon trägt; der längere gewinnt dann in `applyEdits`.
+ * Linear: jedes Zeichen wird je `@` höchstens einmal gelesen und nie über das Ende des vorigen Funds hinaus, die Prüfungen sind Präfixsummen.
  */
-function greedyMails(name: string, ranges: readonly TextRange[], formHits: readonly ScanHit[], viewMails: readonly Finding[]): { start: number; end: number; text: string }[] {
+function greedyMails(name: string, ranges: readonly TextRange[], stops: readonly (ScanHit | Finding)[], viewMails: readonly Finding[], held: (text: string) => boolean): { start: number; end: number; text: string }[] {
   const stem = name.slice(0, stemEnd(name));
+  const n = stem.length;
+  const free = viewMails.filter((v) => v.end <= n && inside(ranges, v.start, v.end));
+  const formCov = coverage(n, stops);
+  const heldCov = coverage(n, [...stops.filter((h) => "field" in h && h.field === "mail"), ...free.filter((v) => held(v.text))]);
+  const shown = new Set(free.map((v) => `${String(v.start)}:${String(v.end)}`));
+  // Je `@` das weiteste Ende (das rohe Muster liest eine Domain mit Bindestrich, die Sicht nicht).
+  const ends = new Map<number, number>();
+  for (const f of [...detectEmail(stem), ...free]) {
+    const at = stem.indexOf("@", f.start);
+    if (at < 0 || at >= f.end) continue;
+    ends.set(at, Math.max(ends.get(at) ?? 0, f.end));
+  }
   const out: { start: number; end: number; text: string }[] = [];
-  // Der Anfang läuft nie über das Ende des vorigen Funds zurück: jedes Zeichen wird höchstens einmal gelesen, die Suche bleibt linear.
   let floor = 0;
-  for (const f of detectEmail(stem)) {
-    const range = ranges.find((r) => r.start < f.end && f.end <= r.end);
+  let ri = 0;
+  for (const at of [...ends.keys()].sort((x, y) => x - y)) {
+    const end = ends.get(at) ?? at;
+    while (ri < ranges.length && (ranges[ri]?.end ?? 0) <= at) ri++;
+    const range = ranges[ri];
     const low = Math.max(floor, range?.start ?? 0);
-    floor = f.end;
-    if (range === undefined) continue;
-    let start = Math.max(f.start, low);
+    floor = Math.max(floor, end);
+    if (range === undefined || range.start > at || end > range.end) continue;
+    let start = at;
+    let segment = true;
     while (start > low) {
       const ch = codePointBefore(stem, start);
-      if (ch === undefined || !LOCAL_CHAR.test(ch)) break;
+      if (ch === undefined) break;
+      if (segment && SEGMENT_CHAR.test(ch)) { start -= ch.length; continue; }
+      segment = false;
+      if (!LOCAL_CHAR.test(ch) || covered(formCov, start - ch.length, start)) break;
       start -= ch.length;
     }
-    while (start < f.end && LOCAL_LEAD.test(stem.charAt(start))) start++;
-    const end = f.end;
-    if (formHits.some((h) => h.field === "mail" && h.start < end && start < h.end)) continue;
-    if (viewMails.some((v) => v.start <= start && end <= v.end)) continue;
+    while (start < at && LOCAL_LEAD.test(stem.charAt(start))) start++;
+    if (start >= at || covered(heldCov, start, end)) continue;
+    const key = `${String(start)}:${String(end)}`;
+    if (shown.has(key)) continue;
+    shown.add(key);
     out.push({ start, end, text: stem.slice(start, end) });
   }
   return out;
@@ -512,8 +556,10 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
     }
     const found = DETECTORS.map((d) => ({ group: d.group, findings: d.run(view) }));
     if (part.kind === "filename") {
-      const viewMails = found.flatMap((g) => g.findings).filter((f) => f.kind === "email");
-      for (const g of greedyMails(part.value, ranges, formHits, viewMails)) {
+      const all = found.flatMap((g) => g.findings);
+      const viewMails = all.filter((f) => f.kind === "email");
+      const stops = [...formHits, ...all.filter((f) => f.kind !== "email")];
+      for (const g of greedyMails(part.value, ranges, stops, viewMails, (t) => keep("mail", t) || lookup("mail", t) !== null)) {
         if (!enabled.patterns && lookup("mail", g.text) === null && !keep("mail", g.text)) continue;
         push(g.start, g.end, "mail", "mail", CONFIDENCE_RANK.high, CONFIDENCE.high, null, null, g.text);
       }

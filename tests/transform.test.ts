@@ -73,9 +73,11 @@ describe("K2: keep bei längeren bekannten Formen und im Dateinamen (Sicherheits
     expect(known(r)[0]).toBe("Rechnung_max-muster@example.org.pdf");
   });
 
-  it("K2b: ohne keep ist die Adresse ein Kandidat, gierig gelesen samt dem Wort davor (Entscheidung 2026-11-25)", () => {
+  it("K2b: ohne keep ist die Adresse ein Kandidat, gierig gelesen samt dem Wort davor (Entscheidung 2026-11-25); ein bekannter Name davor bleibt eigener Treffer", () => {
     const r = req([part("a", "Rechnung_max-muster@example.org.pdf", "filename")]);
-    expect(values(plan(r))).toEqual(["Rechnung_max-muster@example.org"]);
+    expect(values(plan(r, emptyTable()))).toEqual(["Rechnung_max-muster@example.org"]);
+    expect(values(plan(r))).toEqual(["muster@example.org"]);
+    expect(known(r)[0]).toBe(`Rechnung-${P}_2-muster@example.org.pdf`);
   });
 });
 
@@ -347,6 +349,46 @@ describe("Dateinamen", () => {
       const kept = req([part("a", "Rechnung-erika@example.org.pdf", "filename")], { keep: ["erika@example.org"] });
       expect(plan(kept, emptyTable()).candidates).toEqual([]);
       expect(known(kept, emptyTable())[0]).toBe("Rechnung-erika@example.org.pdf");
+    });
+    it("Gegenlesung 1: ein bekannter Name oder eine bekannte Nummer davor bleibt ein eigener Treffer und wird nie Teil des Mail-Werts", () => {
+      for (const [name, expected] of [
+        ["Max-Mustermann-info@example.com.pdf", `${P}-Mail_0000000001.pdf`],
+        ["Max Mustermann-Rechnung_info@example.com.pdf", `${P}-Mail_0000000001.pdf`],
+        ["Max_info@example.com.pdf", `${P}_2-Mail_0000000001.pdf`],
+        ["030-1234567-info@example.com.pdf", `${P}_Telefon-Mail_0000000001.pdf`],
+      ] as const) {
+        const r = req([part("a", name, "filename")]);
+        expect(values(plan(r))).toEqual([name.includes("Rechnung") ? "Rechnung_info@example.com" : "info@example.com"]);
+        expect(replaced(name, sampleTable()).out).toBe(expected);
+      }
+    });
+    it("Gegenlesung 1: das Wort direkt vor dem @ gehört immer zur Adresse, auch wenn es ein bekannter Name ist", () => {
+      expect(values(plan(req([part("a", "hans-max@example.com.pdf", "filename")])))).toEqual(["hans-max@example.com"]);
+    });
+    it("Gegenlesung 2: eine Adresse aus der Ausnahmeliste bleibt, die gierige Fassung entfällt", () => {
+      const t = must(tableSetException(emptyTable(), "info@example.org", true));
+      const r = req([part("a", "Rechnung-info@example.org.pdf", "filename")]);
+      expect(plan(r, t).candidates).toEqual([]);
+      expect(known(r, t)[0]).toBe("Rechnung-info@example.org.pdf");
+    });
+    it("Gegenlesung 3 bis 5: hinter einem Platzhalter, zerlegte Umlaute, Apostroph, zweite Adresse ohne Trenner, Domain mit Bindestrich ohne Endung", () => {
+      for (const [name, value] of [
+        [`${P}.max@example.com.pdf`, "max@example.com"],
+        [`${P}+max@example.com.pdf`, "max@example.com"],
+        ["Mu\u0308ller-max@example.com.pdf", "Mu\u0308ller-max@example.com"],
+        ["O'Brien-max@example.com.pdf", "O'Brien-max@example.com"],
+        ["max@example-firma.org", "max@example-firma.org"],
+        ["Rechnung-max@example-firma.org", "Rechnung-max@example-firma.org"],
+      ] as const) {
+        expect(values(plan(req([part("a", name, "filename")]), emptyTable()))).toEqual([value]);
+      }
+      expect(values(plan(req([part("a", "erika@example.org-hans-max@example.com.pdf", "filename")]), emptyTable()))).toEqual(["erika@example.org", "hans-max@example.com"]);
+    });
+    it("Laufzeit: viele Adressen in einem Namen bleiben linear", () => {
+      for (const unit of ["a@example.com ", "max@example.org-", "Max-x@example.com_"]) {
+        const r = pruefeLinear((k: number) => plan(req([part("a", `${unit.repeat(k)}.pdf`, "filename")]), sampleTable()), (n) => Math.max(1, Math.floor(n / 10)));
+        expect(r.linear, r.message).toBe(true);
+      }
     });
     it("in Text und Zeilen ändert sich nichts: dort las das Muster die Folge schon immer ganz", () => {
       expect(values(plan(req([part("a", "Rechnung-max-muster@example.org", "line")]), emptyTable()))).toEqual(["Rechnung-max-muster@example.org"]);
