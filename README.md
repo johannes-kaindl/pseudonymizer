@@ -28,7 +28,7 @@ This is pseudonymization, not anonymization. The plugin does not claim to anonym
 ## Requirements
 
 - **Obsidian 1.13.0+**, desktop and mobile.
-- The table is a file with its own extension (`.pseudo`) in your vault, and your sync has to transfer files of that type, or your other devices do not see the table. **With Obsidian Sync, turn on *Sync all other types* under Settings → Sync → Selective sync on every device** and restart Obsidian: by Obsidian's help, Sync transfers only images, audio, videos and PDFs besides notes by default, and the setting does not sync between devices. Measured once with Obsidian Sync from a Mac to an iPhone: a `.pseudo` file did not reach the phone within six days, while its folder did (the selective sync settings were not read). That the file arrives with the setting on is **not measured yet**. The plugin cannot check your sync and says so during setup.
+- The table is a file with its own extension (`.pseudo`) in your vault, and your sync has to transfer files of that type, or your other devices do not see the table. **With Obsidian Sync, turn on *Sync all other types* under Settings → Sync → Selective sync on every device** and restart Obsidian: by Obsidian's help, Sync transfers only images, audio, videos and PDFs besides notes by default, and the setting does not sync between devices. Measured once with Obsidian Sync from a Mac to an iPhone: a `.pseudo` file did not reach the phone within six days, while its folder did (the selective sync settings were not read). Measured again with the setting on at both devices (Obsidian 1.15.1, Mac and iPhone): the `.pseudo` file reached the phone byte for byte (same length and SHA-256). The plugin cannot check your sync and says so during setup.
 - The plugin makes no network requests.
 
 ## Install
@@ -152,7 +152,7 @@ Each of these is known and not hidden.
 - **Copy with plain text and the front matter:** plain text is put back only where the plugin would also replace it. In the front matter every property value is checked on its own: a value that is an address (`cover: https://…`), a wikilink or code keeps its placeholder; keys, list markers, continuation lines and comment lines are never restored.
 - A removed device loses whatever only it knew if its file could not be read any more.
 - Two devices that forget at the same time may need to turn forward once more; the plugin does that by itself.
-- Obsidian Sync leaves files with the extension `.pseudo` out unless *Sync all other types* is on (see Requirements); with the setting on, the transfer is not measured yet.
+- Obsidian Sync leaves files with the extension `.pseudo` out unless *Sync all other types* is on (see Requirements); with the setting on at both devices, the file arrived byte for byte (measured once, Mac to iPhone).
 - The phone shows plain text like the desktop. Measured once on an iPhone (iOS 18.7, Obsidian 1.15.1): Obsidian's secret storage keeps the key across a restart of the app, and WebCrypto (AES-GCM, HKDF, HMAC, AES-KW, PBKDF2) is available and fast. Live Preview with cursor and keyboard on the phone is **not measured yet**.
 - If every device and every saved code are lost, the placeholders can never be turned back into names. The notes stay readable.
 

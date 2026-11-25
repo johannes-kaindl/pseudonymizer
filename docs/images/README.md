@@ -7,7 +7,7 @@ The images show invented values only (`Max Mustermann`, `Anna Probe`, `Erika Mus
 
 State 2026-11-19: all four images are recorded (`hero.png`, `review.png`, `persons.png`, `devices.png`), looked at one by one.
 The theme is the light default (`moonstone`), set by the fixture. The status bar is cropped out of the images that would show it.
-Not shown on purpose: the phone (the plugin's behaviour on the phone is not measured yet) and the setup dialog with the recovery code (a real code would show; the dialog is described in the README).
+Not shown on purpose: the phone (Live Preview with cursor and keyboard on the phone is not measured yet) and the setup dialog with the recovery code (a real code would show; the dialog is described in the README).
 
 ## Recipe
 

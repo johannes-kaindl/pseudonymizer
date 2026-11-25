@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- README and help: Obsidian Sync with *Sync all other types* turned on at both devices carries the `.pseudo` files byte for byte (measured from a Mac to an iPhone); the note "not measured yet" is gone.
+
 ## [0.1.1] — 2026-11-25
 
 ### Fixed
