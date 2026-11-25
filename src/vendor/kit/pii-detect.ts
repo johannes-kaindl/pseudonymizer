@@ -1,4 +1,4 @@
-// vendored from code-kit@0.86.1, src/ts/pure/pii-detect.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from code-kit@0.91.1, src/ts/pure/pii-detect.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 // Origin: new in code-kit (Welle 36, kp2d, order 9 of the pseudonymizer design, spec sections 7.3 row 7 and 8.4). Nothing like it existed: measured 2026-11-19,
 // `naehte_suche.py anrede gruss signatur postadresse` found 0 hits in the libraries and the plugins. The shapes for e-mail, IBAN and phone are those of
 // `redact.ts` (`PII_PATTERNS`, shared by an additive export, not copied); the IBAN is read through `checkIban` (check digits, so an order number in IBAN

@@ -1,4 +1,4 @@
-// vendored from code-kit@0.86.1, src/ts/web/key-envelope.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from code-kit@0.91.1, src/ts/web/key-envelope.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 /** Encrypted envelope: bytes under AES-256-GCM with a readable header (format, version, device id, chain id, key stand) that is authenticated as additional data.
  *
  *  ABGENOMMEN 2026-11-19 — Opus-Review in zwei Runden (Runde 1 gegen 446a089: 0 blockierend, 0 wichtig, 6 klein, behoben in 53fd995; Runde 2 gegen 53fd995: abgenommen) mit Messung in Chromium 142 (Obsidian 1.15.1) und Node: Vektoren aus RFC 5869 und NIST CAVP, Bitkipp-Versuche, 10 000 Siegel ohne doppelten Nonce. Berichte: review-krypto-runde1.md und review-krypto-runde2.md im Planungs-Cache der Welle 36 (Kit-Linie). Nicht gemessen: WebKit/iOS (kommt mit der iPhone-Messung des Pseudonymizers).
@@ -8,7 +8,7 @@
  *  key chain of the host and on paper as `pure/recovery-code`.
  *
  *  ── Axis: `web`, not `pure` ─────────────────────────────────────────────────────────────
- *  Only WebCrypto (`globalThis.crypto.subtle`, `crypto.getRandomValues`); no `node:crypto`, no primitive of our own. Named procedure: AES-256-GCM
+ *  Only WebCrypto (`crypto.subtle`, `crypto.getRandomValues`); no `node:crypto`, no primitive of our own. Named procedure: AES-256-GCM
  *  (NIST SP 800-38D), 96-bit nonce, 128-bit tag.
  *
  *  ── The bytes ───────────────────────────────────────────────────────────────────────────
@@ -117,9 +117,9 @@ export async function aesGcmSeal(key: CryptoKey, aad: Uint8Array, plaintext: Uin
   if (!usable(key) || !key.usages.includes("encrypt")) return { ok: false, reason: "key" };
   try {
     const nonce = new Uint8Array(NONCE_BYTES);
-    globalThis.crypto.getRandomValues(nonce);
+    crypto.getRandomValues(nonce);
     const sealed = new Uint8Array(
-      await globalThis.crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: Uint8Array.from(aad), tagLength: TAG_BYTES * 8 }, key, Uint8Array.from(plaintext)),
+      await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: Uint8Array.from(aad), tagLength: TAG_BYTES * 8 }, key, Uint8Array.from(plaintext)),
     );
     const out = new Uint8Array(NONCE_BYTES + sealed.length);
     out.set(nonce, 0);
@@ -135,7 +135,7 @@ export async function aesGcmOpen(key: CryptoKey, aad: Uint8Array, sealed: Uint8A
   if (!usable(key) || !key.usages.includes("decrypt")) return { ok: false, reason: "key" };
   if (sealed.length < NONCE_BYTES + TAG_BYTES) return { ok: false, reason: "truncated" };
   try {
-    const plain = await globalThis.crypto.subtle.decrypt(
+    const plain = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: Uint8Array.from(sealed.subarray(0, NONCE_BYTES)), additionalData: Uint8Array.from(aad), tagLength: TAG_BYTES * 8 },
       key,
       Uint8Array.from(sealed.subarray(NONCE_BYTES)),

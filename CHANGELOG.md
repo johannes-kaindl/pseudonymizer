@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Community store review: the bundled cryptography modules reached WebCrypto through `globalThis`, which the store scanner reports (medium) and which lowered the review to Satisfactory. They now use `crypto` directly, the same browser object; encryption, keys and files are unchanged (code-kit 0.91.1).
+- A code block that opens inside a list item and is never closed now ends where the list item ends, as CommonMark reads it. Before, the text after it counted as code up to the end of the note or up to the next fence line outside the item: it was not pseudonymized, not shown as plain text in Live Preview and not restored when copying (code-kit 0.87.0 to 0.91.1).
+
 ## [0.1.0] — 2026-11-25
 
 ### Added

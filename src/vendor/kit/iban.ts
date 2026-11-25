@@ -1,4 +1,4 @@
-// vendored from code-kit@0.86.1, src/ts/pure/iban.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from code-kit@0.91.1, src/ts/pure/iban.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 // Origin: new in code-kit (Welle 36, kp2, order 6 of the pseudonymizer design, spec section 8.4). No consumer copy exists: measured 2026-11-18, the
 // workspace held no check-digit function (0 hits for luhn / mod 97). `redact.ts` has an IBAN SHAPE (`createPiiRedactor`, label `IBAN`); this module
 // answers the question the shape cannot: is the check digit right.

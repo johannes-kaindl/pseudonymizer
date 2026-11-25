@@ -1,4 +1,4 @@
-// vendored from code-kit@0.86.1, src/ts/pure/placeholder-table.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from code-kit@0.91.1, src/ts/pure/placeholder-table.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 // Origin: new in code-kit (Welle 36, kp2c, order 5 of the pseudonymizer design, spec sections 8.1 to 8.3, released by Johannes 2026-11-18 22:44). Builds on
 // `placeholder.ts` (the grammar, `PlaceholderParts`, `PlaceholderResolution`, `restorePlaceholders`); it is the table behind the placeholders: who an ID
 // belongs to, which values and spellings it stands for, what was forgotten.

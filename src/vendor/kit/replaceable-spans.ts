@@ -1,4 +1,4 @@
-// vendored from code-kit@0.86.1, src/ts/pure/replaceable-spans.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from code-kit@0.91.1, src/ts/pure/replaceable-spans.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 // Origin: lifted from vault-rag `src/protect_markup.ts` (vault-rag@09d73bc, "Wikilinks, Einbettungen und Code beim Umformulieren schützen", Welle 14; that file took its
 // wikilink/embed expressions from wikijs-maintainer `src/core/links.ts`), Welle 36, kp2d, order 7 of the pseudonymizer design (spec sections 7.2 and 8.4).
 //

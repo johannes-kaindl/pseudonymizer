@@ -1,4 +1,4 @@
-// vendored from code-kit@0.86.1, src/ts/web/key-ratchet.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
+// vendored from code-kit@0.91.1, src/ts/web/key-ratchet.ts — do not hand-edit; re-vendor via tools/sync-kit.sh
 /** Key ratchet: from the chain key of stand n to the chain key of stand n+1 and the encryption key of stand n, both by HKDF-SHA-256 over WebCrypto.
  *
  *  ABGENOMMEN 2026-11-19 — Opus-Review in zwei Runden (Runde 1 gegen 446a089: 0 blockierend, 0 wichtig, 6 klein, behoben in 53fd995; Runde 2 gegen 53fd995: abgenommen) mit Messung in Chromium 142 (Obsidian 1.15.1) und Node: Vektoren aus RFC 5869 und NIST CAVP, Bitkipp-Versuche, 10 000 Siegel ohne doppelten Nonce. Berichte: review-krypto-runde1.md und review-krypto-runde2.md im Planungs-Cache der Welle 36 (Kit-Linie). Nicht gemessen: WebKit/iOS (kommt mit der iPhone-Messung des Pseudonymizers).
@@ -8,7 +8,7 @@
  *  key is `web/key-envelope`; the text form of a chain key for paper is `pure/recovery-code`.
  *
  *  ── Axis: `web`, not `pure` ─────────────────────────────────────────────────────────────
- *  `globalThis.crypto.subtle` and `crypto.getRandomValues` are host objects (Chromium, WebKit, Node 20 and later). Nothing else is used: no
+ *  `crypto.subtle` and `crypto.getRandomValues` are host objects (Chromium, WebKit, Node 20 and later). Nothing else is used: no
  *  `node:crypto`, no primitive of our own, no hash of our own. The two named procedures: HKDF with SHA-256 (RFC 5869) and, in the envelope,
  *  AES-256-GCM (NIST SP 800-38D).
  *
@@ -82,8 +82,8 @@ export function newChain(): RatchetResult<ChainState> {
   try {
     const chainId = new Uint8Array(CHAIN_ID_BYTES);
     const chainKey = new Uint8Array(CHAIN_KEY_BYTES);
-    globalThis.crypto.getRandomValues(chainId);
-    globalThis.crypto.getRandomValues(chainKey);
+    crypto.getRandomValues(chainId);
+    crypto.getRandomValues(chainKey);
     return { ok: true, value: { chainId, stand: 0, chainKey } };
   } catch {
     return { ok: false, reason: "platform" };
@@ -94,7 +94,7 @@ export function newChain(): RatchetResult<ChainState> {
 async function importAndWipe(secret: Uint8Array, usages: KeyUsage[]): Promise<CryptoKey> {
   const copy = Uint8Array.from(secret);
   try {
-    return await globalThis.crypto.subtle.importKey("raw", copy, "HKDF", false, usages);
+    return await crypto.subtle.importKey("raw", copy, "HKDF", false, usages);
   } finally {
     copy.fill(0);
   }
@@ -105,7 +105,7 @@ export async function hkdfSha256(ikm: Uint8Array, salt: Uint8Array, info: Uint8A
   try {
     // `Uint8Array` is not always a `BufferSource` for the type checker (ArrayBufferLike); the copies also keep a caller's view out of WebCrypto.
     const base = await importAndWipe(ikm, ["deriveBits"]);
-    const bits = await globalThis.crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: Uint8Array.from(salt), info: Uint8Array.from(info) }, base, length * 8);
+    const bits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: Uint8Array.from(salt), info: Uint8Array.from(info) }, base, length * 8);
     return { ok: true, value: new Uint8Array(bits) };
   } catch {
     return { ok: false, reason: "platform" };
@@ -148,7 +148,7 @@ export async function encryptionKey(state: ChainState): Promise<RatchetResult<Cr
   if (bad) return bad;
   try {
     const base = await importAndWipe(state.chainKey, ["deriveKey"]);
-    const key = await globalThis.crypto.subtle.deriveKey(
+    const key = await crypto.subtle.deriveKey(
       { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: utf8(INFO_ENCRYPTION) },
       base,
       { name: "AES-GCM", length: 256 },
