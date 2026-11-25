@@ -15,3 +15,4 @@ All notable changes to this project are documented here. The format follows
 - Commands to pseudonymize a selection or a whole note, including its text properties.
 - Persons and exceptions: search, merge, detach a value, exception list, forget a person for good.
 - Plugin API v1 (`status`, `transform`, `restore`, `containsPlaceholder`); `restore` takes the optional `skipAddressesAndCode` to leave placeholders in link targets, image URLs, bare URLs and code.
+- File names (`transform` with `kind: "filename"`): the extension is never read; known values with a hyphen are replaced as a whole, and a mail address not known yet is read greedily, so a word in front of it goes into the placeholder with it (`Rechnung-max@example.org.pdf`). Known addresses, header addresses, `keep` and the exception list take precedence.
