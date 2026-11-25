@@ -10,9 +10,6 @@
 
 <p align="center"><img src="https://raw.githubusercontent.com/johannes-kaindl/pseudonymizer/main/docs/images/hero.png" width="820" alt="Dieselbe Notiz zweimal: links die Datei im Quelltext mit Platzhaltern, rechts die Lesesicht mit eingeblendetem Klartext"></p>
 
-> [!warning]
-> Pseudonymizer ist in Bau und noch nicht veröffentlicht. Es gibt weder ein Release noch einen Tag noch einen Store-Eintrag. Nichts in diesem Repository ist bereit, echte Daten zu schützen.
-
 Agenten mit Dateizugriff, Sync-Dienste, Git-Remotes und Backups sehen deine Notizen als gewöhnliche Dateien. Pseudonymizer ersetzt Namen, Adressen, Telefonnummern und ähnliche Werte in diesen Dateien durch Platzhalter, damit diese Leser Platzhalter und eine verschlüsselte Tabelle sehen statt der Personen. In Obsidian selbst kommt der Klartext beim Lesen zurück.
 
 Das ist Pseudonymisierung, keine Anonymisierung. Das Plugin behauptet nicht, zu anonymisieren, und es ist keine Rechtsberatung.
@@ -31,12 +28,12 @@ Das ist Pseudonymisierung, keine Anonymisierung. Das Plugin behauptet nicht, zu 
 ## Voraussetzungen
 
 - **Obsidian 1.13.0+**, Desktop und Mobil.
-- Die Tabelle ist eine Datei mit eigener Endung (`.pseudo`) in deinem Vault. Sie zu synchronisieren verlangt einen Sync, der Dateien dieses Typs überträgt. Ob Obsidian Sync das tut, ist **noch nicht gemessen**; das Plugin sagt es beim Einrichten, statt still unvollständig zu sein.
+- Die Tabelle ist eine Datei mit eigener Endung (`.pseudo`) in deinem Vault, und dein Sync muss Dateien dieses Typs übertragen, sonst sehen deine anderen Geräte die Tabelle nicht. **Mit Obsidian Sync schaltest du auf jedem Gerät unter Einstellungen → Sync im Abschnitt *Selective sync* den Schalter *Sync all other types* (alle anderen Dateitypen) ein** und startest Obsidian neu: Laut Obsidians Hilfe überträgt Sync neben Notizen ab Werk nur Bilder, Audio, Videos und PDFs, und die Einstellung wird nicht zwischen Geräten synchronisiert. Einmal gemessen mit Obsidian Sync vom Mac zum iPhone: Eine `.pseudo`-Datei war nach sechs Tagen nicht am Telefon angekommen, ihr Ordner schon (die Einstellungen der selektiven Synchronisierung wurden nicht gelesen). Dass die Datei mit eingeschalteter Einstellung ankommt, ist **noch nicht gemessen**. Das Plugin kann deinen Sync nicht prüfen und sagt das beim Einrichten.
 - Das Plugin macht keine Netzwerk-Anfragen.
 
 ## Installation
 
-Es gibt noch kein Release. Sobald Version 0.1.0 erschienen ist, lässt sich das Plugin auf drei Wegen installieren.
+Das Plugin lässt sich auf drei Wegen installieren.
 
 ### Über die Community-Plugins in Obsidian
 
@@ -155,8 +152,8 @@ Jede davon ist bekannt und wird nicht verschwiegen.
 - **Mit Klartext kopieren und das Frontmatter:** Klartext wird nur dort eingesetzt, wo das Plugin auch ersetzen würde. Im Frontmatter wird jeder Eigenschaftswert für sich geprüft: Ein Wert, der eine Adresse (`cover: https://…`), ein Wikilink oder Code ist, behält den Platzhalter; Schlüssel, Listenzeichen, Fortsetzungs- und Kommentarzeilen werden nie zurückgesetzt.
 - Ein entferntes Gerät verliert, was nur es kannte, wenn seine Datei nicht mehr lesbar war.
 - Vergessen zwei Geräte gleichzeitig, kann ein Gerät noch einmal weiterdrehen müssen; das Plugin tut das selbst.
-- Ob Obsidian Sync Dateien mit der Endung `.pseudo` überträgt, ist **noch nicht gemessen** (die Messung steht aus). Das Plugin kann es nicht prüfen und sagt es beim Einrichten.
-- Das Verhalten am Telefon ist **noch nicht gemessen und folgt**: Schlüsselbund und WebCrypto unter iOS, Live Preview mit Cursor und Tastatur und die Entscheidung, ob das Telefon überhaupt Klartext zeigt.
+- Obsidian Sync lässt Dateien mit der Endung `.pseudo` aus, solange *Sync all other types* aus ist (siehe Voraussetzungen); mit eingeschalteter Einstellung ist die Übertragung **noch nicht gemessen**.
+- Das Telefon zeigt Klartext wie der Desktop. Einmal an einem iPhone gemessen (iOS 18.7, Obsidian 1.15.1): Obsidians Schlüsselbund behält den Schlüssel über einen Neustart der App, und WebCrypto (AES-GCM, HKDF, HMAC, AES-KW, PBKDF2) ist vorhanden und schnell. Live Preview mit Cursor und Tastatur am Telefon ist **noch nicht gemessen**.
 - Gehen alle Geräte und jeder gesicherte Code verloren, lassen sich die Platzhalter nie mehr in Namen zurückverwandeln. Die Notizen bleiben lesbar.
 
 ## Dokumentation

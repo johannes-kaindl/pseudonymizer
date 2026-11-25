@@ -61,6 +61,8 @@ describe("askSetUp", () => {
     expect(text).toContain(en["modal.setup.sync"]);
     expect(en["modal.setup.sync"]).toMatch(/Not checked/);
     expect(en["modal.setup.sync"]).toContain(".pseudo");
+    expect(en["modal.setup.sync"]).toContain("Sync all other types");
+    expect(STRINGS.de["modal.setup.sync"]).toContain("Sync all other types");
     expect(text).toContain(en["modal.setup.loss"]);
     expect(text).toContain(en["modal.setup.language.hint"]);
   });
