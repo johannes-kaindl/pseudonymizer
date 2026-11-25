@@ -1,6 +1,6 @@
 {
   "name": "pseudonymizer",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Replaces personal data in notes with stable placeholders, keeps the mapping encrypted in the vault and shows the plain text while reading.",
   "type": "module",
   "scripts": {

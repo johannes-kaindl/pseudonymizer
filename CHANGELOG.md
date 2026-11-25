@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-11-25
+
 ### Added
 
 - Stable placeholders for persons and their data (mail address, phone number, address, IBAN); a value carries the identifier of a person only after you confirmed it belongs to them.
