@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-11-25
+
 ### Fixed
 
 - Community store review: the bundled cryptography modules reached WebCrypto through `globalThis`, which the store scanner reports (medium) and which lowered the review to Satisfactory. They now use `crypto` directly, the same browser object; encryption, keys and files are unchanged (code-kit 0.91.1).
