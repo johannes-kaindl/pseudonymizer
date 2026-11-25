@@ -201,6 +201,9 @@ function inside(ranges: readonly TextRange[], start: number, end: number): boole
   return r !== undefined && r.start <= start && end <= r.end;
 }
 
+/** Endungen, die im Dateinamen immer Endung sind, auch hinter einer Domain mit Bindestrich (`stemEnd`). */
+const FILE_EXTENSIONS: ReadonlySet<string> = new Set(["pdf", "md", "txt", "doc", "docx", "odt", "rtf", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp", "png", "jpg", "jpeg", "gif", "webp", "heic", "svg", "tif", "tiff", "bmp", "eml", "msg", "ics", "vcf", "zip", "gz", "7z", "rar", "mp3", "m4a", "wav", "mp4", "mov", "html", "htm", "xml", "json", "pages", "key", "numbers", "epub"]);
+
 /** Wo die Endung eines Dateinamens beginnt (`name.length`, wenn es keine gibt). */
 function stemEnd(name: string): number {
   const dot = name.lastIndexOf(".");
@@ -208,11 +211,12 @@ function stemEnd(name: string): number {
   const ext = name.slice(dot + 1);
   if (ext.length < 1 || ext.length > 5) return name.length;
   for (let i = 0; i < ext.length; i++) if (!/[A-Za-z0-9]/.test(ext.charAt(i))) return name.length;
-  // `max@example.org` ohne Endung: der letzte Punkt gehört zur Adresse, wenn hinter dem `@` bis zu ihm kein weiterer Punkt, kein Leerzeichen und kein Unterstrich steht (ein Bindestrich darf: `max@example-firma.org`).
+  // `max@example.org` ohne Endung: der letzte Punkt gehört zur Adresse, wenn hinter dem `@` bis zu ihm kein weiterer Punkt und kein Trenner steht. Mit Bindestrich (`max@example-firma.org`) nur,
+  // wenn die Endung keine gängige Dateiendung ist: `Treffen@home-office.pdf` behält seine Endung (Gegenlesung Runde 2).
   const at = name.lastIndexOf("@", dot);
   if (at >= 0) {
     const domain = name.slice(at + 1, dot);
-    if (domain !== "" && !/[ ._]/.test(domain)) return name.length;
+    if (domain !== "" && !/[ ._]/.test(domain) && (!domain.includes("-") || !FILE_EXTENSIONS.has(ext.toLowerCase()))) return name.length;
   }
   return dot;
 }
@@ -378,11 +382,11 @@ interface Hit { start: number; end: number; text: string; field: PlaceholderFiel
 const kindOfField = (f: PlaceholderField | null): CandidateKind => (f === null ? "person" : f);
 
 /** Ein Zeichen, das im Dateinamen noch zum lokalen Teil einer Adresse gelesen wird: Buchstaben (auch Umlaute, auch zerlegt mit Zeichen `\p{M}`), Ziffern, `'`, `_` und die Zeichen `.%+-` des Kit-Musters. */
-const LOCAL_CHAR = /^[\p{L}\p{M}\p{N}'_.%+-]$/u;
+const LOCAL_CHAR = /^[\p{L}\p{M}\p{N}'’_.%+-]$/u;
 /** Ein Zeichen des Wortes direkt vor dem `@` (ohne Trenner): es gehört immer zur Adresse, auch wenn dort eine bekannte Form steht (`max` in `hans-max@example.org`). */
-const SEGMENT_CHAR = /^[\p{L}\p{M}\p{N}']$/u;
+const SEGMENT_CHAR = /^[\p{L}\p{M}\p{N}'’]$/u;
 /** Am Anfang des gierigen Werts nicht mitgenommen: ein Trenner bleibt im Dateinamen stehen. */
-const LOCAL_LEAD = /^['._%+-]$/;
+const LOCAL_LEAD = /^['’._%+-]$/;
 
 /** Wie viele Stellen in `[0, i)` von mindestens einer Spanne bedeckt sind (Präfixsumme, linear über Differenzen); `c[e] - c[s] > 0` heißt: in `[s, e)` liegt eine bedeckte Stelle. */
 function coverage(n: number, spans: readonly TextRange[]): Int32Array {

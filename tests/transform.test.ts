@@ -384,6 +384,13 @@ describe("Dateinamen", () => {
       }
       expect(values(plan(req([part("a", "erika@example.org-hans-max@example.com.pdf", "filename")]), emptyTable()))).toEqual(["erika@example.org", "hans-max@example.com"]);
     });
+    it("Gegenlesung Runde 2: eine gängige Endung bleibt Endung, auch hinter einer Domain mit Bindestrich; typografischer Apostroph", () => {
+      for (const name of ["Treffen@home-office.pdf", "Notiz@Kunden-Termin.md", "icon@2x-dark.png"]) {
+        expect(replaced(name).out.endsWith(name.slice(name.lastIndexOf(".")))).toBe(true);
+      }
+      expect(values(plan(req([part("a", "max@example-firma.org", "filename")]), emptyTable()))).toEqual(["max@example-firma.org"]);
+      expect(values(plan(req([part("a", "O\u2019Brien-max@example.com.pdf", "filename")]), emptyTable()))).toEqual(["O\u2019Brien-max@example.com"]);
+    });
     it("Laufzeit: viele Adressen in einem Namen bleiben linear", () => {
       for (const unit of ["a@example.com ", "max@example.org-", "Max-x@example.com_"]) {
         const r = pruefeLinear((k: number) => plan(req([part("a", `${unit.repeat(k)}.pdf`, "filename")]), sampleTable()), (n) => Math.max(1, Math.floor(n / 10)));
