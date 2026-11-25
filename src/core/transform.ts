@@ -18,12 +18,14 @@
 // Dateinamen [Plan, Entscheidung des Bau-Masters]: Ein Platzhalter in einem Dateinamen muss von `findPlaceholders` wiedergefunden werden, und die Spec verlangt als Grenze ein Zeichen, das kein
 // Buchstabe, keine Ziffer und kein Unterstrich ist. Deshalb gilt für `kind: "filename"`:
 //  - die Endung (ab dem letzten Punkt, wenn danach nur Buchstaben und Ziffern bis zu fünf Zeichen folgen) wird nie ersetzt und nie gelesen;
-//  - `_` und `-` trennen beim Lesen wie ein Leerzeichen (`Rechnung_max@example.org.pdf` und `Rechnung-max@example.org.pdf` tragen dieselbe Adresse);
+//  - `_` und `-` trennen beim Lesen wie ein Leerzeichen (`Rechnung_max@example.org.pdf` und `Rechnung-max@example.org.pdf` tragen dieselbe bekannte Adresse);
+//  - eine UNBEKANNTE Adresse wird gierig gelesen (`greedyMails`, Entscheidung Johannes 2026-11-25): `-` und `_` gehören dort zum lokalen Teil wie im Mail-Muster des Kits, ein Wort davor verschwindet mit
+//    (`Rechnung-max@example.org.pdf` wird EIN Kandidat `Rechnung-max@example.org`; zu viel ersetzen ist der ungefährliche Fehler, ein stehen gebliebenes `hans-` wäre ein Stück eines Werts);
 //  - steht neben einer ersetzten Stelle ein Unterstrich, wird dieser Unterstrich ein Bindestrich (sonst wäre der Platzhalter ein Teil eines längeren Wortes).
 //  - ein bekannter Wert, ein Wert aus dem Mail-Kopf und ein `keep`-Wert mit `_` oder `-` (`Hans-Peter Muster`, `max-muster@example.org`) wird zusätzlich in seiner Dateinamenform gesucht
 //    und auf den Wert der Tabelle zurückgeführt (Welle 37).
-// Grenzen: Der Rückweg stellt `Rechnung-max@example.org.pdf` her, nicht byte-gleich zu `Rechnung_max@example.org.pdf`. Eine UNBEKANNTE Adresse mit Bindestrich im lokalen Teil
-// (`max-muster@example.org`, weder in der Tabelle noch im Mail-Kopf) erkennt der Erkenner im Dateinamen ab dem letzten Bindestrich: der vordere Teil bleibt stehen. Ein Dateiname ist keine
+// Grenzen: Der Rückweg stellt `Rechnung-max@example.org.pdf` her, nicht byte-gleich zu `Rechnung_max@example.org.pdf`. Bei einer unbekannten Adresse verschwindet ein Wort vor dem Bindestrich
+// mit im Platzhalter. Eine bekannte Adresse (Tabelle, Mail-Kopf, `keep`) geht vor und ersetzt nur sich selbst: mit bekannter `max@example.org` bleibt in `hans-max@example.org.pdf` `hans-` stehen. Ein Dateiname ist keine
 // Markdown-Zeile: Links, Tags und Code werden dort nicht geschützt.
 //
 // Benannte Lücken (Spec 8.4): Ein Dritter mitten im Satz ohne Anrede („die Kollegin Schmidt“) wird nicht gefunden. Wer in `keep` steht, wird nur geschützt, wenn er als eigene Fundstelle auftaucht
@@ -375,6 +377,43 @@ interface Hit { start: number; end: number; text: string; field: PlaceholderFiel
 
 const kindOfField = (f: PlaceholderField | null): CandidateKind => (f === null ? "person" : f);
 
+/** Ein Zeichen, das im Dateinamen noch zum lokalen Teil einer Adresse gelesen wird: Buchstaben (auch Umlaute) und Ziffern, `_` und die Zeichen `.%+-` des Kit-Musters. */
+const LOCAL_CHAR = /^[\p{L}\p{N}_.%+-]$/u;
+/** Am Anfang des gierigen Werts nicht mitgenommen: ein Trenner bleibt im Dateinamen stehen. */
+const LOCAL_LEAD = /^[._%+-]$/;
+
+/**
+ * `filename`: die Adressen, gierig gelesen (Entscheidung Johannes 2026-11-25). Das Mail-Muster des Kits läuft auf dem rohen Stamm, in dem `-` und `_` stehen, wie sie stehen: beide sind dort
+ * Zeichen des lokalen Teils (`[A-Z0-9._%+-]`), also wird `Rechnung-max-muster@example.org` und `Rechnung_max-muster@example.org` als Ganzes gelesen, nicht ab dem letzten Trenner. Danach läuft der Anfang
+ * über weitere Buchstaben (auch Umlaute, die das ASCII-Muster nicht kennt) bis zu einem Leerzeichen, einem anderen Zeichen oder dem Rand des ersetzbaren Bereichs (ein Platzhalter im Namen wird nie
+ * mitgenommen); ein Trenner am Anfang bleibt stehen. Vorrang: Berührt die gierige Fassung einen Treffer der Formenliste mit Feld `mail` (bekannt, aus dem Mail-Kopf, `keep`), entfällt sie, und der
+ * Wert der Tabelle gewinnt wie bisher. Zurück kommen nur Fassungen, die länger sind als ein Fund der Sicht (sonst trägt der schon dieselbe Stelle); der längere gewinnt dann in `applyEdits`.
+ */
+function greedyMails(name: string, ranges: readonly TextRange[], formHits: readonly ScanHit[], viewMails: readonly Finding[]): { start: number; end: number; text: string }[] {
+  const stem = name.slice(0, stemEnd(name));
+  const out: { start: number; end: number; text: string }[] = [];
+  // Der Anfang läuft nie über das Ende des vorigen Funds zurück: jedes Zeichen wird höchstens einmal gelesen, die Suche bleibt linear.
+  let floor = 0;
+  for (const f of detectEmail(stem)) {
+    const range = ranges.find((r) => r.start < f.end && f.end <= r.end);
+    const low = Math.max(floor, range?.start ?? 0);
+    floor = f.end;
+    if (range === undefined) continue;
+    let start = Math.max(f.start, low);
+    while (start > low) {
+      const ch = codePointBefore(stem, start);
+      if (ch === undefined || !LOCAL_CHAR.test(ch)) break;
+      start -= ch.length;
+    }
+    while (start < f.end && LOCAL_LEAD.test(stem.charAt(start))) start++;
+    const end = f.end;
+    if (formHits.some((h) => h.field === "mail" && h.start < end && start < h.end)) continue;
+    if (viewMails.some((v) => v.start <= start && end <= v.end)) continue;
+    out.push({ start, end, text: stem.slice(start, end) });
+  }
+  return out;
+}
+
 /**
  * Was in der Anfrage steht und was die Tabelle dazu sagt. Ändert nichts. `enabled` schaltet die Regelgruppen der Erkenner ab: ein abgeschalteter Erkenner meldet keinen Kandidaten, ersetzt aber, was die
  * Tabelle schon kennt (ein bekannter Wert verschwindet nicht, weil eine Gruppe aus ist). `lang` ist die Sprache der Platzhalter-Wörter (Spec 8.1).
@@ -458,19 +497,27 @@ export function planTransform(req: TransformRequest, table: PlaceholderTable, de
     const { view, ranges } = viewOf(part);
     if (ranges.length === 0) continue;
     const hits: Hit[] = [];
-    const push = (start: number, end: number, field: PlaceholderField | null, kind: CandidateKind, rank: number, confidence: number, tag: Tag | null, owner: string | null = null): void => {
+    const push = (start: number, end: number, field: PlaceholderField | null, kind: CandidateKind, rank: number, confidence: number, tag: Tag | null, owner: string | null = null, raw?: string): void => {
       if (end <= start || !inside(ranges, start, end)) return;
-      const seen = view.slice(start, end);
+      const seen = raw ?? view.slice(start, end);
       const text = part.kind === "filename" ? (filenameOriginal.get(filenameKey(field, seen)) ?? seen) : seen;
       const placeholder = lookup(field, text);
       const kept = tag === "keep" || keep(field, text);
       hits.push({ start, end, text, field, kind, rank: kept ? RANK_KEPT : placeholder !== null ? RANK_KNOWN : rank, kept, placeholder: kept ? null : placeholder, confidence, owner });
     };
-    for (const h of part.kind === "filename" ? scanForms(view, filenameForms, true) : scanForms(view, forms)) {
+    const formHits = part.kind === "filename" ? scanForms(view, filenameForms, true) : scanForms(view, forms);
+    for (const h of formHits) {
       const field = h.field;
       push(h.start, h.end, field, kindOfField(field), RANK_ENTITY, CONFIDENCE.high, h.tag);
     }
     const found = DETECTORS.map((d) => ({ group: d.group, findings: d.run(view) }));
+    if (part.kind === "filename") {
+      const viewMails = found.flatMap((g) => g.findings).filter((f) => f.kind === "email");
+      for (const g of greedyMails(part.value, ranges, formHits, viewMails)) {
+        if (!enabled.patterns && lookup("mail", g.text) === null && !keep("mail", g.text)) continue;
+        push(g.start, g.end, "mail", "mail", CONFIDENCE_RANK.high, CONFIDENCE.high, null, null, g.text);
+      }
+    }
     // Die Namen, die ein Signaturblock tragen kann: die Namenszeile nach der Grußformel und die erste Zeile hinter `-- `.
     const blockNames = found.flatMap((g) => g.findings).filter((f) => f.kind === "person" && (f.rule === "closing" || f.rule === "signature") && !keep(null, f.text));
     // Derselbe Wert wird oft von zwei Regeln gefunden (die Mail-Adresse als Muster und als Signatur); der Besitzervorschlag hängt an der Stelle, nicht an der Regel, die gewinnt.

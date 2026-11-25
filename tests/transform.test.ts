@@ -6,6 +6,8 @@ import { applyPlan, candidateKey, decisionsOf, markCandidates, planTransform, wi
 import { findPlaceholders, formatPlaceholder } from "../src/vendor/kit/placeholder";
 import { emptyTable, tableAddEntry, tableFindValue, tableIsException, tableIsPlain, tableSetException, type PlaceholderTable } from "../src/vendor/kit/placeholder-table";
 import type { TransformPart, TransformRequest } from "../src/vendor/kit/pseudonymizer-source";
+import { MemoryTable } from "../src/core/memory-table";
+import { PseudonymizerEngine } from "../src/obsidian/engine";
 import { pruefeLinear, pruefeLinearFuzz } from "./vendor/kit/linear-probe";
 import { must, PERSON, sampleTable, withValue } from "./helpers/table-fixtures";
 
@@ -71,9 +73,9 @@ describe("K2: keep bei längeren bekannten Formen und im Dateinamen (Sicherheits
     expect(known(r)[0]).toBe("Rechnung_max-muster@example.org.pdf");
   });
 
-  it("K2b: ohne keep ist die Adresse (ab dem letzten Bindestrich) weiter ein Kandidat", () => {
+  it("K2b: ohne keep ist die Adresse ein Kandidat, gierig gelesen samt dem Wort davor (Entscheidung 2026-11-25)", () => {
     const r = req([part("a", "Rechnung_max-muster@example.org.pdf", "filename")]);
-    expect(values(plan(r))).toEqual(["muster@example.org"]);
+    expect(values(plan(r))).toEqual(["Rechnung_max-muster@example.org"]);
   });
 });
 
@@ -303,6 +305,60 @@ describe("Dateinamen", () => {
     });
     it("in Text und Zeilen bleibt die Bindestrich-Form die einzige: „Hans Peter Muster“ ist dort kein bekannter Wert", () => {
       expect(one("Hans Peter Muster", "line", hyphenTable())).toBe("Hans Peter Muster");
+    });
+  });
+
+  describe("unbekannte Adresse gierig gelesen (Entscheidung Johannes 2026-11-25)", () => {
+    /** Alle Kandidaten mit der Vorgabe ersetzen: das Ergebnis und die neue Tabelle. */
+    const replaced = (name: string, table: PlaceholderTable = emptyTable(), extra: Partial<TransformRequest> = {}): { out: string; table: PlaceholderTable } => {
+      const r = req([part("a", name, "filename")], extra);
+      const a = ok(applyPlan(r, plan(r, table), table, new Map(), counterIds()));
+      return { out: a.parts[0]?.value ?? "", table: a.table };
+    };
+    it.each([
+      ["Rechnung-max-muster@example.org.pdf", "Rechnung-max-muster@example.org"],
+      ["Rechnung_max-muster@example.org.pdf", "Rechnung_max-muster@example.org"],
+      ["Rechnung_max_muster@example.org.pdf", "Rechnung_max_muster@example.org"],
+      ["max-muster@example.org.pdf", "max-muster@example.org"],
+      ["Rechnung max-muster@example.org.pdf", "max-muster@example.org"],
+      ["Rechnung-max@example.org.pdf", "Rechnung-max@example.org"],
+      ["Rechnung-Müller-max@example.org.pdf", "Rechnung-Müller-max@example.org"],
+      ["Rechnung-max@example-firma.org.pdf", "Rechnung-max@example-firma.org"],
+    ])("%s: ein Kandidat über die ganze Folge, kein Stück der Adresse bleibt Klartext", (name, value) => {
+      expect(values(plan(req([part("a", name, "filename")]), emptyTable()))).toEqual([value]);
+      const { out } = replaced(name);
+      expect(out).not.toMatch(/max|muster|example|Müller/i);
+      expect(findPlaceholders(out)).toHaveLength(1);
+    });
+    it("ein Leerzeichen, eine Klammer und ein Platzhalter im Namen beenden das gierige Lesen; ein Trenner am Anfang bleibt stehen", () => {
+      expect(values(plan(req([part("a", "(Rechnung)-max@example.org.pdf", "filename")]), emptyTable()))).toEqual(["max@example.org"]);
+      const withPlaceholder = `${P}-max-muster@example.org.pdf`;
+      expect(values(plan(req([part("a", withPlaceholder, "filename")]), emptyTable()))).toEqual(["max-muster@example.org"]);
+      expect(replaced(withPlaceholder).out).toBe(`${P}-Mail_0000000001.pdf`);
+    });
+    it("Vorrang: eine bekannte Adresse ersetzt im Dateinamen weiter nur sich selbst, das Wort davor bleibt", () => {
+      expect(plan(req([part("a", "Rechnung-max@example.org.pdf", "filename")])).candidates).toEqual([]);
+      expect(replaced("Rechnung-max@example.org.pdf", sampleTable()).out).toBe(`Rechnung-${P}_Mail.pdf`);
+      expect(replaced("Rechnung_max@example.org_2024.pdf", sampleTable()).out).toBe(`Rechnung-${P}_Mail-2024.pdf`);
+    });
+    it("Vorrang: eine Adresse aus dem Mail-Kopf und ein keep-Wert gewinnen gegen die gierige Fassung", () => {
+      const fromHeader = req([part("a", "Rechnung-erika@example.org.pdf", "filename")], { entities: [{ email: "erika@example.org" }] });
+      expect(values(plan(fromHeader, emptyTable()))).toEqual(["erika@example.org", "erika@example.org"]);
+      const kept = req([part("a", "Rechnung-erika@example.org.pdf", "filename")], { keep: ["erika@example.org"] });
+      expect(plan(kept, emptyTable()).candidates).toEqual([]);
+      expect(known(kept, emptyTable())[0]).toBe("Rechnung-erika@example.org.pdf");
+    });
+    it("in Text und Zeilen ändert sich nichts: dort las das Muster die Folge schon immer ganz", () => {
+      expect(values(plan(req([part("a", "Rechnung-max-muster@example.org", "line")]), emptyTable()))).toEqual(["Rechnung-max-muster@example.org"]);
+    });
+    it("restore stellt den Dateinamen aus dem Platzhalter byte-gleich wieder her, auch mit Unterstrich und Wort davor", () => {
+      for (const name of ["Rechnung_max-muster@example.org.pdf", "Rechnung-Müller-max@example.org.pdf", "Rechnung max-muster@example.org.pdf"]) {
+        const { out, table } = replaced(name);
+        expect(out).not.toBe(name);
+        const memory = new MemoryTable();
+        memory.open(table);
+        expect(new PseudonymizerEngine(memory).restore(out, "test")).toMatchObject({ text: name, restored: 1 });
+      }
     });
   });
 
